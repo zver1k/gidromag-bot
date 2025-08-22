@@ -1,6 +1,8 @@
 import os
 import logging
 import re
+import signal
+import sys
 from datetime import datetime
 import uuid
 from telegram import Update
@@ -15,15 +17,59 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# Флаг для корректного завершения
+shutdown_flag = False
+
+def signal_handler(signum, frame):
+    """Обработчик сигналов для корректного завершения"""
+    global shutdown_flag
+    logger.info(f"📴 Получен сигнал {signum}, завершаем работу...")
+    shutdown_flag = True
+    sys.exit(0)
+
+# Регистрируем обработчики сигналов
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 # Токены берутся из переменных окружения
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 YANDEX_DISK_TOKEN = os.environ.get("YANDEX_DISK_TOKEN")
 
+# Проверяем наличие обязательных переменных окружения
+if not TELEGRAM_TOKEN:
+    logger.error("❌ TELEGRAM_TOKEN не найден в переменных окружения!")
+    raise ValueError("TELEGRAM_TOKEN обязателен для работы бота")
+
+if not YANDEX_DISK_TOKEN:
+    logger.error("❌ YANDEX_DISK_TOKEN не найден в переменных окружения!")
+    raise ValueError("YANDEX_DISK_TOKEN обязателен для работы бота")
+
+logger.info("✅ Все необходимые токены найдены")
+
 # Подключение к Яндекс.Диску
-y = yadisk.YaDisk(token=YANDEX_DISK_TOKEN)
+try:
+    y = yadisk.YaDisk(token=YANDEX_DISK_TOKEN)
+    # Проверяем подключение
+    disk_info = y.get_disk_info()
+    logger.info(f"✅ Подключение к Яндекс.Диску установлено. Свободно: {disk_info.free // (1024**3)}GB")
+except Exception as e:
+    logger.error(f"❌ Ошибка подключения к Яндекс.Диску: {e}")
+    raise
 
 # Основные папки
 BASE_FOLDER = "Фото оборудования"
+
+# Проверяем и создаем базовую папку при запуске
+try:
+    base_folder_path = f"/{BASE_FOLDER}"
+    if not y.exists(base_folder_path):
+        y.mkdir(base_folder_path)
+        logger.info(f"✅ Создана базовая папка: {base_folder_path}")
+    else:
+        logger.info(f"📁 Базовая папка уже существует: {base_folder_path}")
+except Exception as e:
+    logger.error(f"❌ Ошибка при создании базовой папки: {e}")
+    raise
 
 # Хранение состояния пользователя (номер накладной)
 user_invoice = {}
@@ -391,12 +437,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
     finally:
         # Удаляем локальный файл
-        if os.path.exists(temp_path):
-            try:
+        try:
+            if os.path.exists(temp_path):
                 os.remove(temp_path)
                 logger.info(f"🗑️ Временный файл удален: {temp_path}")
-            except Exception as e:
-                logger.warning(f"Не удалось удалить временный файл {temp_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Не удалось удалить временный файл {temp_path}: {e}")
+            # Пытаемся удалить позже через cleanup
 
 async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -422,7 +469,9 @@ def cleanup_temp_files():
         temp_dir = "/tmp"
         if os.path.exists(temp_dir):
             for filename in os.listdir(temp_dir):
-                if filename.startswith("photo_file_") and filename.endswith(('.jpg', '.jpeg', '.png')):
+                # Ищем файлы, созданные нашим ботом
+                if (filename.endswith(('.jpg', '.jpeg', '.png')) and 
+                    ('photo_file_' in filename or filename.count('_') >= 2)):
                     file_path = os.path.join(temp_dir, filename)
                     try:
                         # Удаляем файлы старше 1 часа
@@ -440,7 +489,7 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем, является ли пользователь администратором
     # Здесь можно добавить проверку по списку администраторов
-    admin_ids = [123456789]  # Замените на реальные ID администраторов
+    admin_ids = [177611260]  # Замените на реальные ID администраторов
     
     if user_id not in admin_ids:
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
@@ -455,32 +504,33 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ {error_msg}")
 
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset_invoice))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("current", current_invoice))
-    app.add_handler(CommandHandler("cleanup", cleanup))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    logger.info("🚀 Запуск Telegram бота...")
     
-    # Запускаем периодическую очистку временных файлов
-    import asyncio
-    async def periodic_cleanup():
-        while True:
-            await asyncio.sleep(3600)  # Каждый час
-            cleanup_temp_files()
-    
-    # Запускаем очистку в фоне
-    asyncio.create_task(periodic_cleanup())
+    try:
+        app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Запуск webhook на Render
-    PORT = int(os.environ.get("PORT", 8443))
-    WEBHOOK_URL = "https://gidromag-bot.onrender.com/"  # твой публичный URL
-    app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=WEBHOOK_URL)
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("reset", reset_invoice))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("status", status))
+        app.add_handler(CommandHandler("current", current_invoice))
+        app.add_handler(CommandHandler("cleanup", cleanup))
+        app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+        logger.info("✅ Все обработчики команд зарегистрированы")
+        logger.info(f"🌐 Запуск webhook на порту {os.environ.get('PORT', 8443)}")
+        logger.info(f"🔗 Webhook URL: {os.environ.get('WEBHOOK_URL', 'https://gidromag-bot.onrender.com/')}")
+
+        # Запуск webhook на Render
+        PORT = int(os.environ.get("PORT", 8443))
+        WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://gidromag-bot.onrender.com/")
+        app.run_webhook(listen="0.0.0.0", port=PORT, webhook_url=WEBHOOK_URL)
+        
+    except Exception as e:
+        logger.error(f"❌ Критическая ошибка при запуске бота: {e}")
+        raise
 
 if __name__ == "__main__":
     main()

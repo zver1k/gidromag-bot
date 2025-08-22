@@ -11,7 +11,7 @@ YANDEX_DISK_TOKEN = os.environ.get("YANDEX_DISK_TOKEN")
 
 # Основные настройки
 BASE_FOLDER = "Фото оборудования"
-WEBHOOK_URL = "https://gidromag-bot.onrender.com/"
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://gidromag-bot.onrender.com/")
 PORT = int(os.environ.get("PORT", 8443))
 
 # Ограничения
