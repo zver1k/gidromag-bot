@@ -227,7 +227,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"1. Отправьте /start\n"
         f"2. Введите номер накладной\n"
         f"3. Отправьте фото оборудования\n"
-        f"4. Фото автоматически сохранится на Яндекс.Диск\n\n"
+        f"4. Фото автоматически сохранится на Яндекс.Диск\n"
+        f"5. Продолжайте загружать фото или используйте /reset для завершения\n\n"
         f"⚠️ **Ограничения:**\n"
         f"• Максимальный размер файла: {format_file_size(MAX_FILE_SIZE)}\n"
         f"• Максимум фото на накладную: {MAX_PHOTOS_PER_INVOICE}\n"
@@ -277,7 +278,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 **Статистика:**\n"
             f"• Фото: {bot_stats['total_photos']}\n"
             f"• Накладные: {bot_stats['total_invoices']}\n"
-            f"• Ошибки: {bot_stats['errors']}"
+            f"• Ошибки: {bot_stats['errors']}\n\n"
+            f"⚙️ **Настройки:**\n"
+            f"• Авто-выход: Отключен\n"
+            f"• Фото для выхода: Не настроено"
         )
         
         await update.message.reply_text(status_text, parse_mode='Markdown')
@@ -312,7 +316,7 @@ async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     if photo_count == 0:
-        invoice_info += "📸 Отправьте первое фото оборудования"
+        invoice_info += f"📸 Отправьте первое фото оборудования"
     elif remaining_photos <= 0:
         invoice_info += "❌ Достигнут лимит фото\nИспользуйте /reset для новой накладной"
     elif remaining_photos <= 5:
@@ -352,7 +356,10 @@ def get_safe_folder_name(invoice: str) -> str:
     return safe_name
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Привет! Пришли номер накладной:")
+    await update.message.reply_text(
+        f"Привет! Пришли номер накладной:\n\n"
+        f"📸 Загружайте фото оборудования. Используйте /reset для завершения накладной."
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -501,6 +508,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚠️ Внимание! Приближается лимит фото для накладной '{invoice_number}'\n"
                 f"Осталось: {MAX_PHOTOS_PER_INVOICE - invoice_photo_count[invoice_number]} фото"
             )
+        
+        # Показываем информацию о загруженном фото
+        await update.message.reply_text(
+            f"📸 Фото загружено! Всего в накладной: {invoice_photo_count[invoice_number]}/{MAX_PHOTOS_PER_INVOICE}\n\n"
+            f"Продолжайте загружать фото или используйте /reset для завершения накладной."
+        )
             
     except yadisk.exceptions.YaDiskError as e:
         bot_stats["errors"] += 1

@@ -18,6 +18,11 @@ PORT = int(os.environ.get("PORT", 8443))
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_PHOTOS_PER_INVOICE = 50
 
+# Поведение бота
+AUTO_EXIT_AFTER_PHOTO = False  # Автоматически выходить из накладной после загрузки фото
+PHOTOS_FOR_AUTO_EXIT = 0  # Количество фото для автоматического выхода (0 = отключено)
+SHOW_PHOTO_COUNT = True  # Показывать количество загруженных фото
+
 # Валидация
 INVOICE_MIN_LENGTH = 3
 INVOICE_MAX_LENGTH = 50
