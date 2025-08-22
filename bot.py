@@ -1,5 +1,8 @@
 import os
 import logging
+import re
+from datetime import datetime
+import uuid
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import yadisk
@@ -25,6 +28,199 @@ BASE_FOLDER = "Фото оборудования"
 # Хранение состояния пользователя (номер накладной)
 user_invoice = {}
 
+# Хранение количества фото для каждой накладной
+invoice_photo_count = {}
+
+# Статистика использования
+bot_stats = {
+    "total_photos": 0,
+    "total_invoices": 0,
+    "errors": 0,
+    "start_time": datetime.now()
+}
+
+# Константы для валидации
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_PHOTOS_PER_INVOICE = 50
+INVOICE_PATTERN = re.compile(r'^[A-Za-z0-9\-_\.]{3,50}$')
+
+def format_file_size(size_bytes: int) -> str:
+    """Форматирует размер файла в читаемом виде"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes // 1024} KB"
+    else:
+        return f"{size_bytes // (1024 * 1024)} MB"
+
+def get_uptime() -> str:
+    """Возвращает время работы бота"""
+    uptime = datetime.now() - bot_stats["start_time"]
+    days = uptime.days
+    hours, remainder = divmod(uptime.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    
+    if days > 0:
+        return f"{days}д {hours}ч {minutes}м"
+    elif hours > 0:
+        return f"{hours}ч {minutes}м"
+    else:
+        return f"{minutes}м"
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статистику бота"""
+    uptime = get_uptime()
+    active_users = len(user_invoice)
+    
+    # Подсчитываем общее количество уникальных накладных
+    unique_invoices = len(set(user_invoice.values()))
+    
+    # Подсчитываем общее количество фото по всем накладным
+    total_photos_in_invoices = sum(invoice_photo_count.values())
+    
+    stats_text = (
+        f"📊 **Статистика бота**\n\n"
+        f"⏱️ Время работы: {uptime}\n"
+        f"👥 Активных пользователей: {active_users}\n"
+        f"📋 Активных накладных: {unique_invoices}\n"
+        f"📸 Всего загружено фото: {bot_stats['total_photos']}\n"
+        f"📸 Фото в накладных: {total_photos_in_invoices}\n"
+        f"📋 Всего накладных: {bot_stats['total_invoices']}\n"
+        f"❌ Ошибок: {bot_stats['errors']}\n\n"
+        f"🔄 Используйте /reset для сброса накладной\n"
+        f"🔍 Используйте /status для проверки сервисов"
+    )
+    
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает справку по командам"""
+    help_text = (
+        f"🤖 **Справка по командам**\n\n"
+        f"/start - Начать работу с новой накладной\n"
+        f"/reset - Сбросить текущую накладную\n"
+        f"/current - Показать текущую накладную\n"
+        f"/stats - Показать статистику бота\n"
+        f"/status - Показать статус бота и сервисов\n"
+        f"/help - Показать эту справку\n\n"
+        f"📋 **Как использовать:**\n"
+        f"1. Отправьте /start\n"
+        f"2. Введите номер накладной\n"
+        f"3. Отправьте фото оборудования\n"
+        f"4. Фото автоматически сохранится на Яндекс.Диск\n\n"
+        f"⚠️ **Ограничения:**\n"
+        f"• Максимальный размер файла: {format_file_size(MAX_FILE_SIZE)}\n"
+        f"• Максимум фото на накладную: {MAX_PHOTOS_PER_INVOICE}\n"
+        f"• Поддерживаемые форматы: JPG, JPEG, PNG\n\n"
+        f"🔧 **Дополнительно:**\n"
+        f"• Используйте /current для просмотра текущей накладной\n"
+        f"• Используйте /status для проверки состояния сервисов\n"
+        f"• Используйте /stats для просмотра статистики\n"
+        f"• При ошибках используйте /reset для сброса\n\n"
+        f"👑 **Административные команды:**\n"
+        f"• /cleanup - Очистка временных файлов"
+    )
+    
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает статус бота и подключения к сервисам"""
+    try:
+        # Проверяем подключение к Яндекс.Диску
+        disk_info = y.get_disk_info()
+        free_space = format_file_size(disk_info.free)
+        total_space = format_file_size(disk_info.total)
+        used_percent = round((disk_info.total - disk_info.free) / disk_info.total * 100, 1)
+        
+        # Проверяем доступность базовой папки
+        base_folder_exists = y.exists(f"/{BASE_FOLDER}")
+        
+        status_text = (
+            f"🔍 **Статус бота**\n\n"
+            f"✅ **Telegram Bot**: Активен\n"
+            f"✅ **Яндекс.Диск**: Подключен\n"
+            f"📁 **Базовая папка**: {'Существует' if base_folder_exists else 'Не найдена'}\n\n"
+            f"💾 **Место на диске:**\n"
+            f"• Свободно: {free_space}\n"
+            f"• Всего: {total_space}\n"
+            f"• Использовано: {used_percent}%\n\n"
+            f"📊 **Статистика:**\n"
+            f"• Фото: {bot_stats['total_photos']}\n"
+            f"• Накладные: {bot_stats['total_invoices']}\n"
+            f"• Ошибки: {bot_stats['errors']}"
+        )
+        
+        await update.message.reply_text(status_text, parse_mode='Markdown')
+        
+    except yadisk.exceptions.YaDiskError as e:
+        error_msg = f"Ошибка при проверке статуса Яндекс.Диска: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}")
+    except Exception as e:
+        error_msg = f"Ошибка при проверке статуса: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}")
+
+async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о текущей накладной пользователя"""
+    user_id = update.message.from_user.id
+    
+    if user_id not in user_invoice:
+        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        return
+    
+    invoice_number = user_invoice[user_id]
+    photo_count = invoice_photo_count.get(invoice_number, 0)
+    remaining_photos = MAX_PHOTOS_PER_INVOICE - photo_count
+    
+    invoice_info = (
+        f"📋 **Текущая накладная**\n\n"
+        f"🔢 Номер: {invoice_number}\n"
+        f"📸 Загружено фото: {photo_count}\n"
+        f"📸 Осталось фото: {remaining_photos}\n"
+        f"📁 Папка: {BASE_FOLDER}/{get_safe_folder_name(invoice_number)}\n\n"
+    )
+    
+    if photo_count == 0:
+        invoice_info += "📸 Отправьте первое фото оборудования"
+    elif remaining_photos <= 0:
+        invoice_info += "❌ Достигнут лимит фото\nИспользуйте /reset для новой накладной"
+    elif remaining_photos <= 5:
+        invoice_info += f"⚠️ Осталось мало фото: {remaining_photos}"
+    else:
+        invoice_info += f"✅ Можно загрузить еще {remaining_photos} фото"
+    
+    await update.message.reply_text(invoice_info, parse_mode='Markdown')
+
+def validate_invoice_number(invoice: str) -> tuple[bool, str]:
+    """
+    Валидация номера накладной
+    Возвращает (is_valid, error_message)
+    """
+    if not invoice or not invoice.strip():
+        return False, "Номер накладной не может быть пустым"
+    
+    invoice = invoice.strip()
+    
+    if len(invoice) < 3:
+        return False, "Номер накладной должен содержать минимум 3 символа"
+    
+    if len(invoice) > 50:
+        return False, "Номер накладной слишком длинный (максимум 50 символов)"
+    
+    if not INVOICE_PATTERN.match(invoice):
+        return False, "Номер накладной содержит недопустимые символы. Разрешены только буквы, цифры, дефис, подчеркивание и точка"
+    
+    return True, ""
+
+def get_safe_folder_name(invoice: str) -> str:
+    """
+    Создает безопасное имя папки для Яндекс.Диска
+    """
+    # Заменяем недопустимые символы на подчеркивание
+    safe_name = re.sub(r'[<>:"/\\|?*]', '_', invoice)
+    return safe_name
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Привет! Пришли номер накладной:")
 
@@ -32,64 +228,254 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
 
+    # Валидация номера накладной
+    is_valid, error_message = validate_invoice_number(text)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_message}\n\nПопробуйте еще раз или используйте команду /reset для сброса.")
+        return
+
     if user_id not in user_invoice:
         user_invoice[user_id] = text
-        await update.message.reply_text(f"Накладная {text} сохранена. Пришли фото оборудования.")
+        invoice_photo_count[text] = 0
+        bot_stats["total_invoices"] += 1
+        await update.message.reply_text(f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото оборудования.")
     else:
-        await update.message.reply_text("Я жду фото, пришли изображение.")
+        await update.message.reply_text("📸 Я жду фото, пришлите изображение.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id not in user_invoice:
-        await update.message.reply_text("Сначала пришли номер накладной.")
+        await update.message.reply_text("❌ Сначала пришлите номер накладной командой /start")
         return
 
     invoice_number = user_invoice[user_id]
+    
+    # Проверяем лимит фото на накладную
+    current_photo_count = invoice_photo_count.get(invoice_number, 0)
+    if current_photo_count >= MAX_PHOTOS_PER_INVOICE:
+        await update.message.reply_text(
+            f"❌ Достигнут лимит фото для накладной '{invoice_number}'\n\n"
+            f"Максимум: {MAX_PHOTOS_PER_INVOICE} фото\n"
+            f"Текущее количество: {current_photo_count}\n\n"
+            f"Используйте /reset для сброса и начала новой накладной."
+        )
+        return
+    
     photo_file = await update.message.photo[-1].get_file()
-    file_path = f"{BASE_FOLDER}/{invoice_number}/{photo_file.file_id}.jpg"
+    
+    # Проверка размера файла
+    if photo_file.file_size > MAX_FILE_SIZE:
+        await update.message.reply_text(f"❌ Файл слишком большой!\n\nМаксимальный размер: {MAX_FILE_SIZE // (1024*1024)}MB\nТекущий размер: {photo_file.file_size // (1024*1024)}MB")
+        return
+    
+    # Проверка формата файла
+    if not photo_file.file_path or not photo_file.file_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+        await update.message.reply_text("❌ Неподдерживаемый формат файла!\n\nПоддерживаются только: JPG, JPEG, PNG")
+        return
+
+    # Создаем уникальное имя файла с временной меткой
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    safe_invoice = get_safe_folder_name(invoice_number)
+    
+    # Определяем расширение файла
+    file_extension = '.jpg'  # По умолчанию
+    if photo_file.file_path:
+        if photo_file.file_path.lower().endswith('.png'):
+            file_extension = '.png'
+        elif photo_file.file_path.lower().endswith('.jpeg'):
+            file_extension = '.jpeg'
+    
+    file_name = f"{timestamp}_{unique_id}{file_extension}"
+    
+    # Пути для загрузки
+    folder_path = f"/{BASE_FOLDER}/{safe_invoice}"
+    file_path = f"{folder_path}/{file_name}"
 
     # Создаем папку на Яндекс.Диске, если нет
-    folder_path = f"/{BASE_FOLDER}/{invoice_number}"
     try:
         if not y.exists(folder_path):
             y.mkdir(folder_path)
-            logger.info(f"Создана папка на Яндекс.Диске: {folder_path}")
+            logger.info(f"✅ Создана папка на Яндекс.Диске: {folder_path}")
+        else:
+            logger.info(f"📁 Папка уже существует: {folder_path}")
+            
+        # Проверяем доступность папки для записи
+        try:
+            test_file_path = f"{folder_path}/.test_write"
+            y.upload_string("test", test_file_path, overwrite=True)
+            y.remove(test_file_path)
+            logger.info(f"✅ Папка доступна для записи: {folder_path}")
+        except Exception as write_test_error:
+            logger.warning(f"⚠️ Проблема с правами записи в папку {folder_path}: {write_test_error}")
+            await update.message.reply_text("⚠️ Предупреждение: возможны проблемы с правами записи в папку.")
+            
+    except yadisk.exceptions.YaDiskError as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Ошибка Яндекс.Диска при создании папки: {e}"
+        logger.error(error_msg)
+        
+        # Более детальные сообщения об ошибках
+        if "quota" in str(e).lower():
+            await update.message.reply_text("❌ Превышен лимит Яндекс.Диска\n\nОбратитесь к администратору для увеличения места.")
+        elif "forbidden" in str(e).lower() or "access" in str(e).lower():
+            await update.message.reply_text("❌ Нет доступа к Яндекс.Диску\n\nПроверьте токен и права доступа.")
+        elif "network" in str(e).lower() or "timeout" in str(e).lower():
+            await update.message.reply_text("❌ Проблема с сетью\n\nПопробуйте позже или проверьте интернет-соединение.")
+        else:
+            await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
+        return
     except Exception as e:
-        logger.error(f"Ошибка при создании папки {folder_path}: {e}")
-        await update.message.reply_text(f"Ошибка при создании папки на Яндекс.Диске: {e}")
+        bot_stats["errors"] += 1
+        error_msg = f"Неожиданная ошибка при создании папки: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
         return
 
     # Сохраняем фото во временный файл
-    temp_path = f"/tmp/{photo_file.file_id}.jpg"
-    await photo_file.download_to_drive(temp_path)
+    temp_path = f"/tmp/{photo_file.file_id}_{unique_id}{file_extension}"
+    try:
+        await photo_file.download_to_drive(temp_path)
+        logger.info(f"📥 Файл загружен во временную папку: {temp_path}")
+        
+        # Проверяем, что файл действительно загрузился
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+            raise Exception("Файл не был загружен или имеет нулевой размер")
+            
+    except Exception as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Ошибка при загрузке файла: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте еще раз или отправьте файл меньшего размера.")
+        return
 
     # Загружаем на Яндекс.Диск
     try:
-        y.upload(temp_path, f"/{file_path}", overwrite=True)
-        logger.info(f"Файл загружен на Яндекс.Диск: /{file_path}")
-        await update.message.reply_text(f"Фото сохранено в накладную {invoice_number}.")
+        y.upload(temp_path, file_path, overwrite=True)
+        bot_stats["total_photos"] += 1
+        invoice_photo_count[invoice_number] = current_photo_count + 1
+        
+        logger.info(f"✅ Файл загружен на Яндекс.Диск: {file_path}")
+        await update.message.reply_text(
+            f"✅ Фото успешно сохранено!\n\n"
+            f"📋 Накладная: {invoice_number}\n"
+            f"📁 Папка: {BASE_FOLDER}/{safe_invoice}\n"
+            f"📸 Файл: {file_name}\n"
+            f"📏 Размер: {format_file_size(photo_file.file_size)}\n"
+            f"📊 Фото в накладной: {invoice_photo_count[invoice_number]}/{MAX_PHOTOS_PER_INVOICE}"
+        )
+        
+        # Предупреждение при приближении к лимиту
+        if invoice_photo_count[invoice_number] >= MAX_PHOTOS_PER_INVOICE * 0.8:
+            await update.message.reply_text(
+                f"⚠️ Внимание! Приближается лимит фото для накладной '{invoice_number}'\n"
+                f"Осталось: {MAX_PHOTOS_PER_INVOICE - invoice_photo_count[invoice_number]} фото"
+            )
+            
+    except yadisk.exceptions.YaDiskError as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Ошибка Яндекс.Диска при загрузке файла: {e}"
+        logger.error(error_msg)
+        
+        # Более детальные сообщения об ошибках
+        if "quota" in str(e).lower():
+            await update.message.reply_text("❌ Превышен лимит Яндекс.Диска\n\nОбратитесь к администратору для увеличения места.")
+        elif "network" in str(e).lower() or "timeout" in str(e).lower():
+            await update.message.reply_text("❌ Проблема с сетью\n\nПопробуйте позже или проверьте интернет-соединение.")
+        else:
+            await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
     except Exception as e:
-        logger.error(f"Ошибка при загрузке файла {file_path} на Яндекс.Диск: {e}")
-        await update.message.reply_text(f"Ошибка при загрузке на Яндекс.Диск: {e}")
+        bot_stats["errors"] += 1
+        error_msg = f"Неожиданная ошибка при загрузке на Яндекс.Диск: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
     finally:
         # Удаляем локальный файл
         if os.path.exists(temp_path):
-            os.remove(temp_path)
-            logger.info(f"Локальный файл удален: {temp_path}")
+            try:
+                os.remove(temp_path)
+                logger.info(f"🗑️ Временный файл удален: {temp_path}")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить временный файл {temp_path}: {e}")
 
 async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     if user_id in user_invoice:
+        old_invoice = user_invoice[user_id]
+        old_photo_count = invoice_photo_count.get(old_invoice, 0)
+        
         del user_invoice[user_id]
-        await update.message.reply_text("Номер накладной сброшен. Пришли новый номер накладной.")
+        if old_invoice in invoice_photo_count:
+            del invoice_photo_count[old_invoice]
+            
+        await update.message.reply_text(
+            f"🔄 Накладная '{old_invoice}' сброшена.\n"
+            f"📸 Было загружено фото: {old_photo_count}\n\n"
+            f"Пришлите новый номер накладной."
+        )
+    else:
+        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+
+def cleanup_temp_files():
+    """Очищает временные файлы в /tmp"""
+    try:
+        temp_dir = "/tmp"
+        if os.path.exists(temp_dir):
+            for filename in os.listdir(temp_dir):
+                if filename.startswith("photo_file_") and filename.endswith(('.jpg', '.jpeg', '.png')):
+                    file_path = os.path.join(temp_dir, filename)
+                    try:
+                        # Удаляем файлы старше 1 часа
+                        if os.path.getmtime(file_path) < (datetime.now().timestamp() - 3600):
+                            os.remove(file_path)
+                            logger.info(f"🗑️ Удален старый временный файл: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить временный файл {filename}: {e}")
+    except Exception as e:
+        logger.error(f"Ошибка при очистке временных файлов: {e}")
+
+async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для очистки временных файлов (только для администраторов)"""
+    user_id = update.message.from_user.id
+    
+    # Проверяем, является ли пользователь администратором
+    # Здесь можно добавить проверку по списку администраторов
+    admin_ids = [123456789]  # Замените на реальные ID администраторов
+    
+    if user_id not in admin_ids:
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        cleanup_temp_files()
+        await update.message.reply_text("✅ Временные файлы очищены.")
+    except Exception as e:
+        error_msg = f"Ошибка при очистке: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}")
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset_invoice))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("current", current_invoice))
+    app.add_handler(CommandHandler("cleanup", cleanup))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    
+    # Запускаем периодическую очистку временных файлов
+    import asyncio
+    async def periodic_cleanup():
+        while True:
+            await asyncio.sleep(3600)  # Каждый час
+            cleanup_temp_files()
+    
+    # Запускаем очистку в фоне
+    asyncio.create_task(periodic_cleanup())
 
     # Запуск webhook на Render
     PORT = int(os.environ.get("PORT", 8443))
