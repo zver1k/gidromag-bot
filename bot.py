@@ -46,12 +46,86 @@ if not YANDEX_DISK_TOKEN:
 
 logger.info("✅ Все необходимые токены найдены")
 
+def get_disk_info_safe():
+    """Безопасно получает информацию о диске"""
+    try:
+        disk_info = y.get_disk_info()
+        
+        # Пытаемся получить информацию разными способами
+        if hasattr(disk_info, 'space') and hasattr(disk_info.space, 'free'):
+            return {
+                'free': disk_info.space.free,
+                'total': disk_info.space.total,
+                'available': True
+            }
+        elif hasattr(disk_info, 'free'):
+            return {
+                'free': disk_info.free,
+                'total': disk_info.total,
+                'available': True
+            }
+        elif hasattr(disk_info, 'available'):
+            return {
+                'free': disk_info.available,
+                'total': disk_info.total if hasattr(disk_info, 'total') else 0,
+                'available': True
+            }
+        else:
+            logger.warning(f"⚠️ Неизвестная структура ответа API: {type(disk_info)}")
+            return {
+                'free': 0,
+                'total': 0,
+                'available': False
+            }
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении информации о диске: {e}")
+        return {
+            'free': 0,
+            'total': 0,
+            'available': False
+        }
+
 # Подключение к Яндекс.Диску
 try:
     y = yadisk.YaDisk(token=YANDEX_DISK_TOKEN)
+    
+    # Логируем версию библиотеки
+    try:
+        import yadisk
+        logger.info(f"📦 Версия библиотеки yadisk: {yadisk.__version__}")
+    except AttributeError:
+        logger.info("📦 Версия библиотеки yadisk: неизвестна")
+    
     # Проверяем подключение
     disk_info = y.get_disk_info()
-    logger.info(f"✅ Подключение к Яндекс.Диску установлено. Свободно: {disk_info.free // (1024**3)}GB")
+    
+    # Отладочная информация
+    logger.info(f"📊 Структура ответа API: {type(disk_info)}")
+    logger.info(f"📊 Атрибуты объекта: {dir(disk_info)}")
+    
+    # Получаем информацию о свободном месте
+    try:
+        free_space = disk_info.space.free
+        total_space = disk_info.space.total
+        free_gb = free_space // (1024**3)
+        logger.info(f"✅ Подключение к Яндекс.Диску установлено. Свободно: {free_gb}GB")
+    except AttributeError as attr_error:
+        # Если структура ответа отличается, логируем базовую информацию
+        logger.warning(f"⚠️ Неожиданная структура ответа API: {attr_error}")
+        logger.info(f"✅ Подключение к Яндекс.Диску установлено")
+        logger.info(f"📊 Информация о диске: {disk_info}")
+        
+        # Пытаемся найти информацию о диске альтернативным способом
+        try:
+            if hasattr(disk_info, 'free'):
+                free_gb = disk_info.free // (1024**3)
+                logger.info(f"✅ Найдено свободное место: {free_gb}GB (альтернативный способ)")
+            elif hasattr(disk_info, 'available'):
+                free_gb = disk_info.available // (1024**3)
+                logger.info(f"✅ Найдено доступное место: {free_gb}GB (альтернативный способ)")
+        except Exception as alt_error:
+            logger.warning(f"⚠️ Альтернативные способы получения информации не сработали: {alt_error}")
+            
 except Exception as e:
     logger.error(f"❌ Ошибка подключения к Яндекс.Диску: {e}")
     raise
@@ -173,10 +247,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статус бота и подключения к сервисам"""
     try:
         # Проверяем подключение к Яндекс.Диску
-        disk_info = y.get_disk_info()
-        free_space = format_file_size(disk_info.free)
-        total_space = format_file_size(disk_info.total)
-        used_percent = round((disk_info.total - disk_info.free) / disk_info.total * 100, 1)
+        disk_info = get_disk_info_safe()
         
         # Проверяем доступность базовой папки
         base_folder_exists = y.exists(f"/{BASE_FOLDER}")
@@ -186,10 +257,23 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"✅ **Telegram Bot**: Активен\n"
             f"✅ **Яндекс.Диск**: Подключен\n"
             f"📁 **Базовая папка**: {'Существует' if base_folder_exists else 'Не найдена'}\n\n"
-            f"💾 **Место на диске:**\n"
-            f"• Свободно: {free_space}\n"
-            f"• Всего: {total_space}\n"
-            f"• Использовано: {used_percent}%\n\n"
+        )
+        
+        if disk_info['available']:
+            free_space = format_file_size(disk_info['free'])
+            total_space = format_file_size(disk_info['total'])
+            used_percent = round((disk_info['total'] - disk_info['free']) / disk_info['total'] * 100, 1) if disk_info['total'] > 0 else 0
+            
+            status_text += (
+                f"💾 **Место на диске:**\n"
+                f"• Свободно: {free_space}\n"
+                f"• Всего: {total_space}\n"
+                f"• Использовано: {used_percent}%\n\n"
+            )
+        else:
+            status_text += "💾 **Место на диске:** Информация недоступна\n\n"
+        
+        status_text += (
             f"📊 **Статистика:**\n"
             f"• Фото: {bot_stats['total_photos']}\n"
             f"• Накладные: {bot_stats['total_invoices']}\n"

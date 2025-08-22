@@ -77,14 +77,34 @@ def test_yandex_connection():
         
         # Получаем информацию о диске
         disk_info = y.get_disk_info()
-        free_gb = disk_info.free // (1024**3)
-        total_gb = disk_info.total // (1024**3)
-        used_percent = round((disk_info.total - disk_info.free) / disk_info.total * 100, 1)
+        
+        # Безопасно получаем информацию
+        if hasattr(disk_info, 'space') and hasattr(disk_info.space, 'free'):
+            free_gb = disk_info.space.free // (1024**3)
+            total_gb = disk_info.space.total // (1024**3)
+            used_percent = round((disk_info.space.total - disk_info.space.free) / disk_info.space.total * 100, 1)
+        elif hasattr(disk_info, 'free'):
+            free_gb = disk_info.free // (1024**3)
+            total_gb = disk_info.total // (1024**3)
+            used_percent = round((disk_info.total - disk_info.free) / disk_info.total * 100, 1)
+        elif hasattr(disk_info, 'available'):
+            free_gb = disk_info.available // (1024**3)
+            total_gb = disk_info.total // (1024**3) if hasattr(disk_info, 'total') else 0
+            used_percent = round((disk_info.total - disk_info.available) / disk_info.total * 100, 1) if disk_info.total > 0 else 0
+        else:
+            print(f"⚠️ Неизвестная структура ответа API: {type(disk_info)}")
+            print(f"   Атрибуты: {dir(disk_info)}")
+            free_gb = 0
+            total_gb = 0
+            used_percent = 0
         
         print(f"✅ Подключение установлено")
-        print(f"   💾 Свободно: {free_gb}GB")
-        print(f"   💾 Всего: {total_gb}GB")
-        print(f"   📊 Использовано: {used_percent}%")
+        if free_gb > 0:
+            print(f"   💾 Свободно: {free_gb}GB")
+            print(f"   💾 Всего: {total_gb}GB")
+            print(f"   📊 Использовано: {used_percent}%")
+        else:
+            print(f"   💾 Информация о диске недоступна")
         
         return True
         
