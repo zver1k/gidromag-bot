@@ -1,5 +1,5 @@
-import logging
 import os
+import logging
 import requests
 from io import BytesIO
 from telegram import Update
@@ -15,14 +15,21 @@ YANDEX_API = "https://cloud-api.yandex.net/v1/disk/resources"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-WAITING_PHOTOS, WAITING_INVOICE = range(2)
+WAITING_PHOTOS = range(1)
 user_photos = {}
 
-def create_folder(invoice_number: str):
+def create_invoice_folder(invoice_number: str):
+    """
+    Создает подпапку с номером накладной внутри Фото оборудования
+    """
     headers = {"Authorization": f"OAuth {YANDEX_TOKEN}"}
-    folder_path = f"/Накладные/{invoice_number}"
-    requests.put(YANDEX_API, params={"path": folder_path}, headers=headers)
-    return folder_path
+    base_folder = "/Фото оборудования"
+    # создаем основную папку, если нет
+    requests.put(YANDEX_API, params={"path": base_folder}, headers=headers)
+    # создаем подпапку с номером накладной
+    invoice_folder = f"{base_folder}/{invoice_number}"
+    requests.put(YANDEX_API, params={"path": invoice_folder}, headers=headers)
+    return invoice_folder
 
 def upload_file_bytes(file_bytes, folder_path, filename):
     headers = {"Authorization": f"OAuth {YANDEX_TOKEN}"}
@@ -45,7 +52,7 @@ def upload_file_bytes(file_bytes, folder_path, filename):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_photos[update.effective_chat.id] = []
     await update.message.reply_text(
-        "Привет! Отправь фото или альбом 📸. Когда закончишь – напиши номер накладной."
+        "Привет! Отправь фото оборудования. Когда закончишь, напиши номер накладной."
     )
     return WAITING_PHOTOS
 
@@ -64,9 +71,9 @@ async def handle_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not photos:
         await update.message.reply_text("Ошибка: фото не найдено. Сначала отправь фото.")
         return ConversationHandler.END
-    folder_path = create_folder(invoice_number)
+    folder_path = create_invoice_folder(invoice_number)
     for idx, bio in enumerate(photos, start=1):
-        upload_file_bytes(bio, folder_path, f"{invoice_number}_{idx}.jpg")
+        upload_file_bytes(bio, folder_path, f"{idx}.jpg")
     await update.message.reply_text(
         f"Загружено {len(photos)} фото в папку '{invoice_number}' на Яндекс.Диске ✅"
     )
@@ -74,6 +81,7 @@ async def handle_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -85,7 +93,16 @@ def main():
         fallbacks=[CommandHandler("start", start)],
     )
     app.add_handler(conv_handler)
-    app.run_polling()
+
+    # Webhook для Render
+    PORT = int(os.environ.get("PORT", 8443))
+    WEBHOOK_URL = f"https://gidromag-bot.onrender.com/{TELEGRAM_TOKEN}"  # <- поменяйте на свой URL
+
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        webhook_url=WEBHOOK_URL
+    )
 
 if __name__ == "__main__":
     main()
