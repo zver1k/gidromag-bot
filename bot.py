@@ -1,4 +1,13 @@
-import os
+def is_user_allowed(user_id: int) -> bool:
+    """Проверяет, имеет ли пользователь доступ к боту"""
+    return user_id in ALLOWED_USERS    async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.message.from_user.id
+        
+        if not is_user_allowed(user_id):
+            await update.message.reply_text("❌ У вас нет прав для использования бота.")
+            return
+            
+        # ...rest of the handler code...import os
 import logging
 import re
 import signal
