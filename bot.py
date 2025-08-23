@@ -35,23 +35,23 @@ ALLOWED_USERS = [
 # Файл для хранения разрешенных пользователей
 USERS_FILE = "allowed_users.txt"
 
-def load_allowed_users() -> set:
+def load_allowed_users() -> list:
     """Загружает список разрешенных пользователей из файла"""
     try:
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE, 'r', encoding='utf-8') as f:
-                users = set(int(line.strip()) for line in f if line.strip().isdigit())
+                users = [int(line.strip()) for line in f if line.strip().isdigit()]
             logger.info(f"✅ Загружено {len(users)} разрешенных пользователей")
             return users
         else:
             # Создаем файл с базовым списком
-            save_allowed_users(set(ALLOWED_USERS))
-            return set(ALLOWED_USERS)
+            save_allowed_users(ALLOWED_USERS)
+            return ALLOWED_USERS.copy()
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки пользователей: {e}")
-        return set(ALLOWED_USERS)
+        return ALLOWED_USERS.copy()
 
-def save_allowed_users(users: set) -> bool:
+def save_allowed_users(users: list) -> bool:
     """Сохраняет список разрешенных пользователей в файл"""
     try:
         with open(USERS_FILE, 'w', encoding='utf-8') as f:
@@ -68,7 +68,7 @@ def add_user_access(user_id: int) -> bool:
     global ALLOWED_USERS
     if user_id not in ALLOWED_USERS:
         ALLOWED_USERS.append(user_id)
-        save_allowed_users(set(ALLOWED_USERS))
+        save_allowed_users(ALLOWED_USERS)
         logger.info(f"✅ Добавлен доступ для пользователя {user_id}")
         return True
     return False
@@ -78,7 +78,7 @@ def remove_user_access(user_id: int) -> bool:
     global ALLOWED_USERS
     if user_id in ALLOWED_USERS:
         ALLOWED_USERS.remove(user_id)
-        save_allowed_users(set(ALLOWED_USERS))
+        save_allowed_users(ALLOWED_USERS)
         logger.info(f"✅ Удален доступ для пользователя {user_id}")
         return True
     return False
@@ -283,12 +283,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
     help_text = (
         f"🤖 **Справка по командам**\n\n"
-        f"/start - Начать работу с новой накладной\n"
-        f"/reset - Сбросить текущую накладную\n"
-        f"/current - Показать текущую накладную\n"
-        f"/stats - Показать статистику бота\n"
-        f"/status - Показать статус бота и сервисов\n"
-        f"/help - Показать эту справку\n\n"
+        f"📋 **Основные команды:**\n"
+        f"• /start - Начать работу с новой накладной\n"
+        f"• /reset - Сбросить текущую накладную\n"
+        f"• /current - Показать текущую накладную\n"
+        f"• /stats - Показать статистику бота\n"
+        f"• /status - Показать статус бота и сервисов\n"
+        f"• /help - Показать эту справку\n"
+        f"• /userinfo - Информация о пользователе\n\n"
+        f"👑 **Административные команды:**\n"
+        f"• /adduser <ID> - Добавить пользователя в список разрешенных\n"
+        f"• /removeuser <ID> - Удалить пользователя из списка разрешенных\n"
+        f"• /listusers - Показать список всех разрешенных пользователей\n"
+        f"• /cleanup - Очистка временных файлов\n\n"
         f"📋 **Как использовать:**\n"
         f"1. Отправьте /start\n"
         f"2. Введите номер накладной\n"
@@ -304,8 +311,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Используйте /status для проверки состояния сервисов\n"
         f"• Используйте /stats для просмотра статистики\n"
         f"• При ошибках используйте /reset для сброса\n\n"
-        f"👑 **Административные команды:**\n"
-        f"• /cleanup - Очистка временных файлов"
+        f"👥 **Управление пользователями:**\n"
+        f"• Администраторы могут добавлять/удалять пользователей\n"
+        f"• Используйте /adduser <ID> для добавления\n"
+        f"• Используйте /removeuser <ID> для удаления\n"
+        f"• Используйте /listusers для просмотра списка\n\n"
+        f"💡 **Как узнать ID пользователя:**\n"
+        f"Попросите пользователя отправить /start боту @userinfobot"
     )
     
     await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -656,10 +668,7 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     
     # Проверяем, является ли пользователь администратором
-    # Здесь можно добавить проверку по списку администраторов
-    admin_ids = [177611260]  # Замените на реальные ID администраторов
-    
-    if user_id not in admin_ids:
+    if user_id not in ADMIN_IDS:
         await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
         return
     
@@ -671,10 +680,178 @@ async def cleanup(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(error_msg)
         await update.message.reply_text(f"❌ {error_msg}")
 
+async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет пользователя в список разрешенных (только для администраторов)"""
+    user_id = update.message.from_user.id
+    
+    # Проверяем права администратора
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    # Проверяем аргументы команды
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите ID пользователя!\n\n"
+            "Пример: /adduser 123456789\n\n"
+            "Чтобы узнать ID пользователя, попросите его отправить /start боту @userinfobot"
+        )
+        return
+    
+    try:
+        new_user_id = int(context.args[0])
+        
+        # Проверяем, что ID разумный
+        if new_user_id <= 0:
+            await update.message.reply_text("❌ ID пользователя должен быть положительным числом!")
+            return
+        
+        # Добавляем пользователя
+        if add_user_access(new_user_id):
+            await update.message.reply_text(
+                f"✅ Пользователь {new_user_id} добавлен в список разрешенных!\n\n"
+                f"Теперь он может использовать бота."
+            )
+        else:
+            await update.message.reply_text(f"ℹ️ Пользователь {new_user_id} уже имеет доступ к боту.")
+            
+    except ValueError:
+        await update.message.reply_text("❌ ID пользователя должен быть числом!")
+    except Exception as e:
+        error_msg = f"Ошибка при добавлении пользователя: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}")
+
+async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет пользователя из списка разрешенных (только для администраторов)"""
+    user_id = update.message.from_user.id
+    
+    # Проверяем права администратора
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    # Проверяем аргументы команды
+    if not context.args:
+        await update.message.reply_text(
+            "❌ Укажите ID пользователя!\n\n"
+            "Пример: /removeuser 123456789"
+        )
+        return
+    
+    try:
+        target_user_id = int(context.args[0])
+        
+        # Проверяем, что ID разумный
+        if target_user_id <= 0:
+            await update.message.reply_text("❌ ID пользователя должен быть положительным числом!")
+            return
+        
+        # Нельзя удалить самого себя
+        if target_user_id == user_id:
+            await update.message.reply_text("❌ Вы не можете удалить свой собственный доступ!")
+            return
+        
+        # Удаляем пользователя
+        if remove_user_access(target_user_id):
+            await update.message.reply_text(
+                f"✅ Пользователь {target_user_id} удален из списка разрешенных!\n\n"
+                f"Теперь он не может использовать бота."
+            )
+        else:
+            await update.message.reply_text(f"ℹ️ Пользователь {target_user_id} не найден в списке разрешенных.")
+            
+    except ValueError:
+        await update.message.reply_text("❌ ID пользователя должен быть числом!")
+    except Exception as e:
+        error_msg = f"Ошибка при удалении пользователя: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}")
+
+async def list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список всех разрешенных пользователей (только для администраторов)"""
+    user_id = update.message.from_user.id
+    
+    # Проверяем права администратора
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ У вас нет прав для выполнения этой команды.")
+        return
+    
+    try:
+        if not ALLOWED_USERS:
+            await update.message.reply_text("📋 Список разрешенных пользователей пуст.")
+            return
+        
+        # Формируем список пользователей
+        users_list = "📋 **Список разрешенных пользователей:**\n\n"
+        
+        for i, user_id in enumerate(sorted(ALLOWED_USERS), 1):
+            # Определяем роль пользователя
+            role = "👑 Администратор" if user_id in ADMIN_IDS else "👤 Пользователь"
+            users_list += f"{i}. `{user_id}` - {role}\n"
+        
+        users_list += f"\n📊 **Всего пользователей:** {len(ALLOWED_USERS)}"
+        
+        await update.message.reply_text(users_list, parse_mode='Markdown')
+        
+    except Exception as e:
+        error_msg = f"Ошибка при получении списка пользователей: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}")
+
+async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает информацию о текущем пользователе"""
+    user = update.message.from_user
+    user_id = user.id
+    
+    # Проверяем права пользователя
+    is_admin = user_id in ADMIN_IDS
+    has_access = user_id in ALLOWED_USERS
+    
+    user_info_text = (
+        f"👤 **Информация о пользователе**\n\n"
+        f"🆔 ID: `{user_id}`\n"
+        f"👤 Имя: {user.first_name or 'Не указано'}\n"
+        f"📝 Фамилия: {user.last_name or 'Не указана'}\n"
+        f"🔗 Username: @{user.username or 'Не указан'}\n\n"
+        f"🔐 **Права доступа:**\n"
+        f"• Доступ к боту: {'✅ Да' if has_access else '❌ Нет'}\n"
+        f"• Администратор: {'✅ Да' if is_admin else '❌ Нет'}\n\n"
+    )
+    
+    if has_access:
+        # Показываем информацию о накладной
+        if user_id in user_invoice:
+            invoice_number = user_invoice[user_id]
+            photo_count = invoice_photo_count.get(invoice_number, 0)
+            user_info_text += (
+                f"📋 **Текущая накладная:**\n"
+                f"• Номер: {invoice_number}\n"
+                f"• Загружено фото: {photo_count}/{MAX_PHOTOS_PER_INVOICE}\n"
+            )
+        else:
+            user_info_text += "📋 **Текущая накладная:** Нет активной накладной\n"
+    
+    if is_admin:
+        user_info_text += (
+            f"\n👑 **Административные команды:**\n"
+            f"• /adduser <ID> - Добавить пользователя\n"
+            f"• /removeuser <ID> - Удалить пользователя\n"
+            f"• /listusers - Список пользователей\n"
+            f"• /cleanup - Очистка временных файлов"
+        )
+    
+    await update.message.reply_text(user_info_text, parse_mode='Markdown')
+
 def main():
     logger.info("🚀 Запуск Telegram бота...")
     
     try:
+        # Загружаем список разрешенных пользователей
+        global ALLOWED_USERS
+        ALLOWED_USERS = load_allowed_users()
+        logger.info(f"👥 Загружено {len(ALLOWED_USERS)} разрешенных пользователей")
+        
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
         app.add_handler(CommandHandler("start", start))
@@ -684,6 +861,10 @@ def main():
         app.add_handler(CommandHandler("current", current_invoice))
         app.add_handler(CommandHandler("cleanup", cleanup))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("adduser", add_user))
+        app.add_handler(CommandHandler("removeuser", remove_user))
+        app.add_handler(CommandHandler("listusers", list_users))
+        app.add_handler(CommandHandler("userinfo", user_info))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
