@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # Флаг для корректного завершения
 shutdown_flag = False
 
-def signal_handler(signum, frame):
+def signal_handler(signum, _):
     """Обработчик сигналов для корректного завершения"""
     global shutdown_flag
     logger.info(f"📴 Получен сигнал {signum}, завершаем работу...")
@@ -364,6 +364,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
+
+    # Проверка доступа пользователя
+    if user_id not in ALLOWED_USERS:
+        await update.message.reply_text("❌ У вас нет прав для использования бота.")
+        return
 
     # Валидация номера накладной
     is_valid, error_message = validate_invoice_number(text)
