@@ -1,13 +1,4 @@
-def is_user_allowed(user_id: int) -> bool:
-    """Проверяет, имеет ли пользователь доступ к боту"""
-    return user_id in ALLOWED_USERS    async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.message.from_user.id
-        
-        if not is_user_allowed(user_id):
-            await update.message.reply_text("❌ У вас нет прав для использования бота.")
-            return
-            
-        # ...rest of the handler code...import os
+import os
 import logging
 import re
 import signal
@@ -28,6 +19,15 @@ logger = logging.getLogger(__name__)
 
 # Флаг для корректного завершения
 shutdown_flag = False
+
+# Список разрешенных пользователей (замените на реальные ID)
+ALLOWED_USERS = [
+    177611260,  # Замените на реальные ID пользователей
+]
+
+def is_user_allowed(user_id: int) -> bool:
+    """Проверяет, имеет ли пользователь доступ к боту"""
+    return user_id in ALLOWED_USERS
 
 def signal_handler(signum, _):
     """Обработчик сигналов для корректного завершения"""
@@ -100,7 +100,6 @@ try:
     
     # Логируем версию библиотеки
     try:
-        import yadisk
         logger.info(f"📦 Версия библиотеки yadisk: {yadisk.__version__}")
     except AttributeError:
         logger.info("📦 Версия библиотеки yadisk: неизвестна")
