@@ -9,6 +9,13 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import yadisk
 
+# Импортируем конфигурацию
+from config import (
+    TELEGRAM_TOKEN, YANDEX_DISK_TOKEN, BASE_FOLDER, WEBHOOK_URL, PORT,
+    MAX_FILE_SIZE, MAX_PHOTOS_PER_INVOICE, INVOICE_PATTERN,
+    ADMIN_IDS, ERROR_MESSAGES, SUCCESS_MESSAGES, INFO_MESSAGES
+)
+
 # Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -24,6 +31,57 @@ shutdown_flag = False
 ALLOWED_USERS = [
     177611260,  # Замените на реальные ID пользователей
 ]
+
+# Файл для хранения разрешенных пользователей
+USERS_FILE = "allowed_users.txt"
+
+def load_allowed_users() -> set:
+    """Загружает список разрешенных пользователей из файла"""
+    try:
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                users = set(int(line.strip()) for line in f if line.strip().isdigit())
+            logger.info(f"✅ Загружено {len(users)} разрешенных пользователей")
+            return users
+        else:
+            # Создаем файл с базовым списком
+            save_allowed_users(set(ALLOWED_USERS))
+            return set(ALLOWED_USERS)
+    except Exception as e:
+        logger.error(f"❌ Ошибка загрузки пользователей: {e}")
+        return set(ALLOWED_USERS)
+
+def save_allowed_users(users: set) -> bool:
+    """Сохраняет список разрешенных пользователей в файл"""
+    try:
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            for user_id in sorted(users):
+                f.write(f"{user_id}\n")
+        logger.info(f"✅ Сохранено {len(users)} разрешенных пользователей")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения пользователей: {e}")
+        return False
+
+def add_user_access(user_id: int) -> bool:
+    """Добавляет пользователя в список разрешенных"""
+    global ALLOWED_USERS
+    if user_id not in ALLOWED_USERS:
+        ALLOWED_USERS.append(user_id)
+        save_allowed_users(set(ALLOWED_USERS))
+        logger.info(f"✅ Добавлен доступ для пользователя {user_id}")
+        return True
+    return False
+
+def remove_user_access(user_id: int) -> bool:
+    """Удаляет пользователя из списка разрешенных"""
+    global ALLOWED_USERS
+    if user_id in ALLOWED_USERS:
+        ALLOWED_USERS.remove(user_id)
+        save_allowed_users(set(ALLOWED_USERS))
+        logger.info(f"✅ Удален доступ для пользователя {user_id}")
+        return True
+    return False
 
 def is_user_allowed(user_id: int) -> bool:
     """Проверяет, имеет ли пользователь доступ к боту"""
@@ -41,8 +99,8 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 # Токены берутся из переменных окружения
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-YANDEX_DISK_TOKEN = os.environ.get("YANDEX_DISK_TOKEN")
+# TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+# YANDEX_DISK_TOKEN = os.environ.get("YANDEX_DISK_TOKEN")
 
 # Проверяем наличие обязательных переменных окружения
 if not TELEGRAM_TOKEN:
@@ -139,7 +197,7 @@ except Exception as e:
     raise
 
 # Основные папки
-BASE_FOLDER = "Фото оборудования"
+# BASE_FOLDER = "Фото оборудования"
 
 # Проверяем и создаем базовую папку при запуске
 try:
@@ -168,9 +226,9 @@ bot_stats = {
 }
 
 # Константы для валидации
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-MAX_PHOTOS_PER_INVOICE = 50
-INVOICE_PATTERN = re.compile(r'^[A-Za-z0-9\-_\.]{3,50}$')
+# MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+# MAX_PHOTOS_PER_INVOICE = 50
+# INVOICE_PATTERN = re.compile(r'^[A-Za-z0-9\-_\.]{3,50}$')
 
 def format_file_size(size_bytes: int) -> str:
     """Форматирует размер файла в читаемом виде"""
@@ -271,7 +329,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if disk_info['available']:
             free_space = format_file_size(disk_info['free'])
             total_space = format_file_size(disk_info['total'])
-            used_percent = round((disk_info['total'] - disk_info['free']) / disk_info['total'] * 100, 1) if disk_info['total'] > 0 else 0
+            used_percent = round((disk_info['total'] - disk_info['free']) / disk_info.total * 100, 1) if disk_info.total > 0 else 0
             
             status_text += (
                 f"💾 **Место на диске:**\n"
