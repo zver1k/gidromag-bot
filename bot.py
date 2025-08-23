@@ -16,6 +16,9 @@ from config import (
     ADMIN_IDS, ERROR_MESSAGES, SUCCESS_MESSAGES, INFO_MESSAGES
 )
 
+# Компилируем регулярное выражение для валидации накладных
+INVOICE_PATTERN = re.compile(INVOICE_PATTERN)
+
 # Логирование
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -409,21 +412,31 @@ def validate_invoice_number(invoice: str) -> tuple[bool, str]:
     Валидация номера накладной
     Возвращает (is_valid, error_message)
     """
-    if not invoice or not invoice.strip():
-        return False, "Номер накладной не может быть пустым"
-    
-    invoice = invoice.strip()
-    
-    if len(invoice) < 3:
-        return False, "Номер накладной должен содержать минимум 3 символа"
-    
-    if len(invoice) > 50:
-        return False, "Номер накладной слишком длинный (максимум 50 символов)"
-    
-    if not INVOICE_PATTERN.match(invoice):
-        return False, "Номер накладной содержит недопустимые символы. Разрешены только буквы, цифры, дефис, подчеркивание и точка"
-    
-    return True, ""
+    try:
+        if not invoice or not invoice.strip():
+            return False, "Номер накладной не может быть пустым"
+        
+        invoice = invoice.strip()
+        
+        if len(invoice) < 3:
+            return False, "Номер накладной должен содержать минимум 3 символа"
+        
+        if len(invoice) > 50:
+            return False, "Номер накладной слишком длинный (максимум 50 символов)"
+        
+        # Проверяем, что INVOICE_PATTERN скомпилирован
+        if not hasattr(INVOICE_PATTERN, 'match'):
+            logger.error(f"❌ INVOICE_PATTERN не является скомпилированным регулярным выражением: {type(INVOICE_PATTERN)}")
+            return False, "Ошибка валидации номера накладной"
+        
+        if not INVOICE_PATTERN.match(invoice):
+            return False, "Номер накладной содержит недопустимые символы. Разрешены только буквы, цифры, дефис, подчеркивание и точка"
+        
+        return True, ""
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка при валидации номера накладной '{invoice}': {e}")
+        return False, f"Ошибка валидации: {str(e)}"
 
 def get_safe_folder_name(invoice: str) -> str:
     """
@@ -442,15 +455,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
+    
+    logger.info(f"📝 Получено сообщение от пользователя {user_id}: '{text}'")
 
     # Проверка доступа пользователя
     if user_id not in ALLOWED_USERS:
+        logger.warning(f"🚫 Пользователь {user_id} не имеет доступа к боту")
         await update.message.reply_text("❌ У вас нет прав для использования бота.")
         return
 
     # Валидация номера накладной
+    logger.info(f"🔍 Валидация номера накладной: '{text}'")
     is_valid, error_message = validate_invoice_number(text)
+    
     if not is_valid:
+        logger.warning(f"❌ Некорректный номер накладной '{text}': {error_message}")
         await update.message.reply_text(f"❌ {error_message}\n\nПопробуйте еще раз или используйте команду /reset для сброса.")
         return
 
@@ -458,8 +477,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_invoice[user_id] = text
         invoice_photo_count[text] = 0
         bot_stats["total_invoices"] += 1
+        logger.info(f"✅ Создана новая накладная '{text}' для пользователя {user_id}")
         await update.message.reply_text(f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото оборудования.")
     else:
+        logger.info(f"📸 Пользователь {user_id} уже имеет активную накладную '{user_invoice[user_id]}'")
         await update.message.reply_text("📸 Я жду фото, пришлите изображение.")
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -853,6 +874,21 @@ def main():
         logger.info(f"👥 Загружено {len(ALLOWED_USERS)} разрешенных пользователей")
         
         app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+        # Добавляем обработчик ошибок
+        async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+            """Обработчик ошибок для логирования исключений"""
+            logger.error(f"❌ Ошибка при обработке обновления: {context.error}")
+            if update and hasattr(update, 'message') and update.message:
+                try:
+                    await update.message.reply_text(
+                        "❌ Произошла ошибка при обработке сообщения.\n"
+                        "Попробуйте еще раз или обратитесь к администратору."
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Не удалось отправить сообщение об ошибке: {e}")
+
+        app.add_error_handler(error_handler)
 
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("reset", reset_invoice))
