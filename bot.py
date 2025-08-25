@@ -39,6 +39,19 @@ ALLOWED_USERS = [
 USERS_FILE = os.path.join(os.path.dirname(__file__), "allowed_users.txt")
 REMOTE_USERS_PATH = f"/{BASE_FOLDER}/allowed_users.txt"
 
+# Вспомогательная функция: загрузить текст на Яндекс.Диск через временный файл
+def upload_text_to_yandex(remote_path: str, content: str) -> None:
+    temp_path = f"/tmp/upload_text_{uuid.uuid4().hex}.txt"
+    with open(temp_path, 'w', encoding='utf-8') as tf:
+        tf.write(content)
+    try:
+        y.upload(temp_path, remote_path, overwrite=True)
+    finally:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
 def load_allowed_users() -> list:
     """Загружает список разрешенных пользователей (приоритет: Яндекс.Диск → локально)"""
     try:
@@ -92,7 +105,7 @@ def save_allowed_users(users: list) -> bool:
             base_folder_path = f"/{BASE_FOLDER}"
             if not y.exists(base_folder_path):
                 y.mkdir(base_folder_path)
-            y.upload_string(content, REMOTE_USERS_PATH, overwrite=True)
+            upload_text_to_yandex(REMOTE_USERS_PATH, content)
             logger.info(f"✅ Список пользователей сохранен на Яндекс.Диске: {REMOTE_USERS_PATH}")
         except Exception as remote_err:
             logger.error(f"❌ Не удалось сохранить список пользователей на Яндекс.Диск: {remote_err}")
@@ -589,7 +602,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем доступность папки для записи
         try:
             test_file_path = f"{folder_path}/.test_write"
-            y.upload_string("test", test_file_path, overwrite=True)
+            upload_text_to_yandex(test_file_path, "test")
             y.remove(test_file_path)
             logger.info(f"✅ Папка доступна для записи: {folder_path}")
         except Exception as write_test_error:
