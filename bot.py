@@ -52,6 +52,28 @@ def upload_text_to_yandex(remote_path: str, content: str) -> None:
         except Exception:
             pass
 
+# Ленивая синхронизация разрешенных пользователей с Яндекс.Диска
+def refresh_allowed_users_from_remote() -> bool:
+    """Пробует обновить ALLOWED_USERS с удаленного файла, если он существует. Возвращает True при успехе."""
+    try:
+        if y.exists(REMOTE_USERS_PATH):
+            temp_path = f"/tmp/allowed_users_{uuid.uuid4().hex}.txt"
+            y.download(REMOTE_USERS_PATH, temp_path)
+            with open(temp_path, 'r', encoding='utf-8') as f:
+                users = [int(line.strip()) for line in f if line.strip().isdigit()]
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+            if users:
+                global ALLOWED_USERS
+                ALLOWED_USERS = sorted(set(users))
+                logger.info(f"🔄 Обновлен список разрешенных пользователей из удаленного файла: {len(ALLOWED_USERS)}")
+            return True
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось обновить список разрешенных пользователей с Яндекс.Диска: {e}")
+    return False
+
 def load_allowed_users() -> list:
     """Загружает список разрешенных пользователей (приоритет: Яндекс.Диск → локально)"""
     try:
@@ -516,11 +538,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"📝 Получено сообщение от пользователя {user_id}: '{text}'")
 
-    # Проверка доступа пользователя
+    # Проверка доступа пользователя (с попыткой ленивой синхронизации из удаленного файла)
     if not is_user_allowed(user_id):
-        logger.warning(f"🚫 Пользователь {user_id} не имеет доступа к боту")
-        await update.message.reply_text("❌ У вас нет прав для использования бота.")
-        return
+        if refresh_allowed_users_from_remote() and is_user_allowed(user_id):
+            logger.info(f"✅ Пользователь {user_id} получил доступ после синхронизации")
+        else:
+            logger.warning(f"🚫 Пользователь {user_id} не имеет доступа к боту")
+            await update.message.reply_text("❌ У вас нет прав для использования бота.")
+            return
 
     # Валидация номера накладной
     logger.info(f"🔍 Валидация номера накладной: '{text}'")
@@ -883,9 +908,9 @@ async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     user_id = user.id
     
-    # Проверяем права пользователя
+    # Проверяем права пользователя (используем общий хелпер)
     is_admin = user_id in ADMIN_IDS
-    has_access = user_id in ALLOWED_USERS
+    has_access = is_user_allowed(user_id)
     
     user_info_text = (
         f"👤 **Информация о пользователе**\n\n"
