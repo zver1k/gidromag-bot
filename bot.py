@@ -88,7 +88,8 @@ def remove_user_access(user_id: int) -> bool:
 
 def is_user_allowed(user_id: int) -> bool:
     """Проверяет, имеет ли пользователь доступ к боту"""
-    return user_id in ALLOWED_USERS
+    # Администраторы всегда имеют доступ
+    return user_id in ALLOWED_USERS or user_id in ADMIN_IDS
 
 def signal_handler(signum, _):
     """Обработчик сигналов для корректного завершения"""
@@ -459,7 +460,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"📝 Получено сообщение от пользователя {user_id}: '{text}'")
 
     # Проверка доступа пользователя
-    if user_id not in ALLOWED_USERS:
+    if not is_user_allowed(user_id):
         logger.warning(f"🚫 Пользователь {user_id} не имеет доступа к боту")
         await update.message.reply_text("❌ У вас нет прав для использования бота.")
         return
