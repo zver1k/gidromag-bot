@@ -35,32 +35,76 @@ ALLOWED_USERS = [
     177611260,  # Замените на реальные ID пользователей
 ]
 
-# Файл для хранения разрешенных пользователей
-USERS_FILE = "allowed_users.txt"
+# Файл для хранения разрешенных пользователей (локально и на Яндекс.Диске)
+USERS_FILE = os.path.join(os.path.dirname(__file__), "allowed_users.txt")
+REMOTE_USERS_PATH = f"/{BASE_FOLDER}/allowed_users.txt"
 
 def load_allowed_users() -> list:
-    """Загружает список разрешенных пользователей из файла"""
+    """Загружает список разрешенных пользователей (приоритет: Яндекс.Диск → локально)"""
     try:
+        # 1) Пробуем загрузить с Яндекс.Диска
+        try:
+            if y.exists(REMOTE_USERS_PATH):
+                temp_path = f"/tmp/allowed_users_{uuid.uuid4().hex}.txt"
+                y.download(REMOTE_USERS_PATH, temp_path)
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    users = [int(line.strip()) for line in f if line.strip().isdigit()]
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+                logger.info(f"✅ Загружено {len(users)} разрешенных пользователей с Яндекс.Диска")
+                # Также обновим локальную копию для отладки (не критично, может не сохраниться)
+                try:
+                    with open(USERS_FILE, 'w', encoding='utf-8') as lf:
+                        for uid in sorted(users):
+                            lf.write(f"{uid}\n")
+                except Exception:
+                    pass
+                return users
+        except Exception as remote_err:
+            logger.warning(f"⚠️ Не удалось загрузить список пользователей с Яндекс.Диска: {remote_err}")
+
+        # 2) Фоллбэк: пробуем локально
         if os.path.exists(USERS_FILE):
             with open(USERS_FILE, 'r', encoding='utf-8') as f:
                 users = [int(line.strip()) for line in f if line.strip().isdigit()]
-            logger.info(f"✅ Загружено {len(users)} разрешенных пользователей")
+            logger.info(f"✅ Загружено {len(users)} разрешенных пользователей (локально)")
             return users
-        else:
-            # Создаем файл с базовым списком
-            save_allowed_users(ALLOWED_USERS)
-            return ALLOWED_USERS.copy()
+
+        # 3) Нет ни удаленного, ни локального — создаем удаленный файл с базовым списком
+        save_allowed_users(ALLOWED_USERS)
+        return ALLOWED_USERS.copy()
+
     except Exception as e:
         logger.error(f"❌ Ошибка загрузки пользователей: {e}")
         return ALLOWED_USERS.copy()
 
 def save_allowed_users(users: list) -> bool:
-    """Сохраняет список разрешенных пользователей в файл"""
+    """Сохраняет список разрешенных пользователей (Яндекс.Диск + локальная копия при возможности)"""
     try:
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
-            for user_id in sorted(users):
-                f.write(f"{user_id}\n")
-        logger.info(f"✅ Сохранено {len(users)} разрешенных пользователей")
+        # Готовим содержимое
+        content = "".join(f"{uid}\n" for uid in sorted(users))
+
+        # 1) Сохраняем на Яндекс.Диск
+        try:
+            # Убедимся, что базовая папка существует
+            base_folder_path = f"/{BASE_FOLDER}"
+            if not y.exists(base_folder_path):
+                y.mkdir(base_folder_path)
+            y.upload_string(content, REMOTE_USERS_PATH, overwrite=True)
+            logger.info(f"✅ Список пользователей сохранен на Яндекс.Диске: {REMOTE_USERS_PATH}")
+        except Exception as remote_err:
+            logger.error(f"❌ Не удалось сохранить список пользователей на Яндекс.Диск: {remote_err}")
+            return False
+
+        # 2) Пытаемся сохранить локальную копию (не критично)
+        try:
+            with open(USERS_FILE, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception:
+            pass
+
         return True
     except Exception as e:
         logger.error(f"❌ Ошибка сохранения пользователей: {e}")
