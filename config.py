@@ -26,7 +26,7 @@ SHOW_PHOTO_COUNT = True  # Показывать количество загру�
 # Валидация
 INVOICE_MIN_LENGTH = 3
 INVOICE_MAX_LENGTH = 50
-INVOICE_PATTERN = r'^[а-яА-ЯёЁa-zA-Z0-9]{3,50}$'
+INVOICE_PATTERN = r'^[а-яА-ЯёЁa-zA-Z0-9 _-]{3,50}$'
 
 # Временные файлы
 TEMP_DIR = "/tmp"
