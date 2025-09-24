@@ -246,35 +246,16 @@ try:
     except AttributeError:
         logger.info("📦 Версия библиотеки yadisk: неизвестна")
     
-    # Проверяем подключение
-    disk_info = y.get_disk_info()
-    
-    # Отладочная информация
-    logger.info(f"📊 Структура ответа API: {type(disk_info)}")
-    logger.info(f"📊 Атрибуты объекта: {dir(disk_info)}")
-    
-    # Получаем информацию о свободном месте
-    try:
-        free_space = disk_info.space.free
-        total_space = disk_info.space.total
-        free_gb = free_space // (1024**3)
+    # Проверяем подключение и логируем базовую информацию
+    raw_info = y.get_disk_info()
+    logger.info(f"📊 Структура ответа API: {type(raw_info)}")
+    logger.info(f"📊 Атрибуты объекта: {dir(raw_info)}")
+    safe_info = get_disk_info_safe()
+    if safe_info['available']:
+        free_gb = safe_info['free'] // (1024**3)
         logger.info(f"✅ Подключение к Яндекс.Диску установлено. Свободно: {free_gb}GB")
-    except AttributeError as attr_error:
-        # Если структура ответа отличается, логируем базовую информацию
-        logger.warning(f"⚠️ Неожиданная структура ответа API: {attr_error}")
-        logger.info(f"✅ Подключение к Яндекс.Диску установлено")
-        logger.info(f"📊 Информация о диске: {disk_info}")
-        
-        # Пытаемся найти информацию о диске альтернативным способом
-        try:
-            if hasattr(disk_info, 'free'):
-                free_gb = disk_info.free // (1024**3)
-                logger.info(f"✅ Найдено свободное место: {free_gb}GB (альтернативный способ)")
-            elif hasattr(disk_info, 'available'):
-                free_gb = disk_info.available // (1024**3)
-                logger.info(f"✅ Найдено доступное место: {free_gb}GB (альтернативный способ)")
-        except Exception as alt_error:
-            logger.warning(f"⚠️ Альтернативные способы получения информации не сработали: {alt_error}")
+    else:
+        logger.warning("⚠️ Не удалось определить свободное место на диске")
             
 except Exception as e:
     logger.error(f"❌ Ошибка подключения к Яндекс.Диску: {e}")
@@ -428,7 +409,9 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if disk_info['available']:
             free_space = format_file_size(disk_info['free'])
             total_space = format_file_size(disk_info['total'])
-            used_percent = round((disk_info['total'] - disk_info['free']) / disk_info.total * 100, 1) if disk_info.total > 0 else 0
+            used_percent = 0
+            if disk_info['total'] > 0:
+                used_percent = round((disk_info['total'] - disk_info['free']) / disk_info['total'] * 100, 1)
             
             status_text += (
                 f"💾 **Место на диске:**\n"
