@@ -13,7 +13,8 @@ import yadisk
 from config import (
     TELEGRAM_TOKEN, YANDEX_DISK_TOKEN, BASE_FOLDER, WEBHOOK_URL, PORT,
     MAX_FILE_SIZE, MAX_PHOTOS_PER_INVOICE, INVOICE_PATTERN,
-    ADMIN_IDS, ERROR_MESSAGES, SUCCESS_MESSAGES, INFO_MESSAGES
+    ADMIN_IDS, ERROR_MESSAGES, SUCCESS_MESSAGES, INFO_MESSAGES,
+    INACTIVITY_TIMEOUT_SECONDS
 )
 
 # Компилируем регулярное выражение для валидации накладных
@@ -297,6 +298,9 @@ except Exception as e:
 # Хранение состояния пользователя (номер накладной)
 user_invoice = {}
 
+# Время последней активности пользователя
+user_last_activity = {}
+
 # Хранение количества фото для каждой накладной
 invoice_photo_count = {}
 
@@ -487,6 +491,28 @@ async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(invoice_info, parse_mode='Markdown')
 
+def is_session_expired(user_id: int) -> bool:
+    """Проверяет, истекла ли сессия пользователя по таймауту бездействия."""
+    last = user_last_activity.get(user_id)
+    if not last:
+        return False
+    return (datetime.now() - last).total_seconds() > INACTIVITY_TIMEOUT_SECONDS
+
+def reset_user_session(user_id: int) -> tuple[bool, str, int]:
+    """Сбрасывает накладную пользователя. Возвращает (was_active, invoice, photo_count)."""
+    if user_id in user_invoice:
+        old_invoice = user_invoice[user_id]
+        old_photo_count = invoice_photo_count.get(old_invoice, 0)
+        del user_invoice[user_id]
+        if old_invoice in invoice_photo_count:
+            del invoice_photo_count[old_invoice]
+        return True, old_invoice, old_photo_count
+    return False, "", 0
+
+def touch_activity(user_id: int) -> None:
+    """Обновляет время последней активности пользователя."""
+    user_last_activity[user_id] = datetime.now()
+
 def validate_invoice_number(invoice: str) -> tuple[bool, str]:
     """
     Валидация номера накладной
@@ -527,6 +553,8 @@ def get_safe_folder_name(invoice: str) -> str:
     return safe_name
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    touch_activity(user_id)
     await update.message.reply_text(
         f"Привет! Пришли номер накладной:\n\n"
         f"📸 Загружайте фото оборудования. Используйте /reset для завершения накладной."
@@ -537,6 +565,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
     logger.info(f"📝 Получено сообщение от пользователя {user_id}: '{text}'")
+
+    # Проверяем таймаут бездействия
+    if is_session_expired(user_id):
+        was_active, old_invoice, old_photo_count = reset_user_session(user_id)
+        if was_active:
+            await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
 
     # Проверка доступа пользователя (с попыткой ленивой синхронизации из удаленного файла)
     if not is_user_allowed(user_id):
@@ -566,10 +600,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"📸 Пользователь {user_id} уже имеет активную накладную '{user_invoice[user_id]}'")
         await update.message.reply_text("📸 Я жду фото, пришлите изображение.")
 
+    # Обновляем время активности в конце обработки
+    touch_activity(user_id)
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
+    # Проверяем таймаут бездействия
+    if is_session_expired(user_id):
+        was_active, old_invoice, old_photo_count = reset_user_session(user_id)
+        if was_active:
+            await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
+        # После сброса просим снова отправить накладную
+        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        touch_activity(user_id)
+        return
     if user_id not in user_invoice:
         await update.message.reply_text("❌ Сначала пришлите номер накладной командой /start")
+        touch_activity(user_id)
         return
 
     invoice_number = user_invoice[user_id]
@@ -729,16 +776,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Не удалось удалить временный файл {temp_path}: {e}")
             # Пытаемся удалить позже через cleanup
 
+    # Обновляем время активности после обработки фото
+    touch_activity(user_id)
+
 async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    if user_id in user_invoice:
-        old_invoice = user_invoice[user_id]
-        old_photo_count = invoice_photo_count.get(old_invoice, 0)
-        
-        del user_invoice[user_id]
-        if old_invoice in invoice_photo_count:
-            del invoice_photo_count[old_invoice]
-            
+    was_active, old_invoice, old_photo_count = reset_user_session(user_id)
+    if was_active:
         await update.message.reply_text(
             f"🔄 Накладная '{old_invoice}' сброшена.\n"
             f"📸 Было загружено фото: {old_photo_count}\n\n"
@@ -746,6 +790,7 @@ async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+    touch_activity(user_id)
 
 def cleanup_temp_files():
     """Очищает временные файлы в /tmp"""
