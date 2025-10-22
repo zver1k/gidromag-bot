@@ -12,8 +12,8 @@ import yadisk
 # Импортируем конфигурацию
 from config import (
     TELEGRAM_TOKEN, YANDEX_DISK_TOKEN, BASE_FOLDER, WEBHOOK_URL, PORT,
-    MAX_FILE_SIZE, MAX_VIDEO_SIZE, MAX_PHOTOS_PER_INVOICE, MAX_VIDEOS_PER_INVOICE,
-    SUPPORTED_PHOTO_FORMATS, SUPPORTED_VIDEO_FORMATS, INVOICE_PATTERN,
+    MAX_FILE_SIZE, MAX_VIDEO_SIZE, MAX_DOCUMENT_SIZE, MAX_PHOTOS_PER_INVOICE, MAX_VIDEOS_PER_INVOICE, MAX_DOCUMENTS_PER_INVOICE,
+    SUPPORTED_PHOTO_FORMATS, SUPPORTED_VIDEO_FORMATS, SUPPORTED_DOCUMENT_FORMATS, INVOICE_PATTERN,
     ADMIN_IDS, ERROR_MESSAGES, SUCCESS_MESSAGES, INFO_MESSAGES,
     INACTIVITY_TIMEOUT_SECONDS
 )
@@ -289,10 +289,14 @@ invoice_photo_count = {}
 # Хранение количества видео для каждой накладной
 invoice_video_count = {}
 
+# Хранение количества документов для каждой накладной
+invoice_document_count = {}
+
 # Статистика использования
 bot_stats = {
     "total_photos": 0,
     "total_videos": 0,
+    "total_documents": 0,
     "total_invoices": 0,
     "errors": 0,
     "start_time": datetime.now()
@@ -334,9 +338,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Подсчитываем общее количество уникальных накладных
     unique_invoices = len(set(user_invoice.values()))
     
-    # Подсчитываем общее количество фото и видео по всем накладным
+    # Подсчитываем общее количество фото, видео и документов по всем накладным
     total_photos_in_invoices = sum(invoice_photo_count.values())
     total_videos_in_invoices = sum(invoice_video_count.values())
+    total_documents_in_invoices = sum(invoice_document_count.values())
     
     stats_text = (
         f"📊 **Статистика бота**\n\n"
@@ -345,8 +350,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📋 Активных накладных: {unique_invoices}\n"
         f"📸 Всего загружено фото: {bot_stats['total_photos']}\n"
         f"🎥 Всего загружено видео: {bot_stats['total_videos']}\n"
+        f"📄 Всего загружено документов: {bot_stats['total_documents']}\n"
         f"📸 Фото в накладных: {total_photos_in_invoices}\n"
         f"🎥 Видео в накладных: {total_videos_in_invoices}\n"
+        f"📄 Документы в накладных: {total_documents_in_invoices}\n"
         f"📋 Всего накладных: {bot_stats['total_invoices']}\n"
         f"❌ Ошибок: {bot_stats['errors']}\n\n"
         f"🔄 Используйте /reset для сброса накладной\n"
@@ -375,16 +382,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📋 **Как использовать:**\n"
         f"1. Отправьте /start\n"
         f"2. Введите номер накладной\n"
-        f"3. Отправьте фото или видео оборудования\n"
+        f"3. Отправьте фото, видео или документы оборудования\n"
         f"4. Файлы автоматически сохранятся на Яндекс.Диск\n"
         f"5. Продолжайте загружать файлы или используйте /reset для завершения\n\n"
         f"⚠️ **Ограничения:**\n"
         f"• Максимальный размер фото: {format_file_size(MAX_FILE_SIZE)}\n"
         f"• Максимальный размер видео: {format_file_size(MAX_VIDEO_SIZE)}\n"
+        f"• Максимальный размер документов: {format_file_size(MAX_DOCUMENT_SIZE)}\n"
         f"• Максимум фото на накладную: {MAX_PHOTOS_PER_INVOICE}\n"
         f"• Максимум видео на накладную: {MAX_VIDEOS_PER_INVOICE}\n"
+        f"• Максимум документов на накладную: {MAX_DOCUMENTS_PER_INVOICE}\n"
         f"• Поддерживаемые фото: JPG, JPEG, PNG\n"
-        f"• Поддерживаемые видео: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V\n\n"
+        f"• Поддерживаемые видео: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V\n"
+        f"• Поддерживаемые документы: PDF, DOC, DOCX, XLS, XLSX\n\n"
         f"🔧 **Дополнительно:**\n"
         f"• Используйте /current для просмотра текущей накладной\n"
         f"• Используйте /status для проверки состояния сервисов\n"
@@ -437,10 +447,12 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 **Статистика:**\n"
             f"• Фото: {bot_stats['total_photos']}\n"
             f"• Видео: {bot_stats['total_videos']}\n"
+            f"• Документы: {bot_stats['total_documents']}\n"
             f"• Накладные: {bot_stats['total_invoices']}\n"
             f"• Ошибки: {bot_stats['errors']}\n\n"
             f"⚙️ **Настройки:**\n"
             f"• Максимальный размер видео: {format_file_size(MAX_VIDEO_SIZE)}\n"
+            f"• Максимальный размер документов: {format_file_size(MAX_DOCUMENT_SIZE)}\n"
             f"• Поддержка 4K: Да\n"
             f"• Авто-выход: Отключен"
         )
@@ -467,27 +479,31 @@ async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invoice_number = user_invoice[user_id]
     photo_count = invoice_photo_count.get(invoice_number, 0)
     video_count = invoice_video_count.get(invoice_number, 0)
+    document_count = invoice_document_count.get(invoice_number, 0)
     remaining_photos = MAX_PHOTOS_PER_INVOICE - photo_count
     remaining_videos = MAX_VIDEOS_PER_INVOICE - video_count
+    remaining_documents = MAX_DOCUMENTS_PER_INVOICE - document_count
     
     invoice_info = (
         f"📋 **Текущая накладная**\n\n"
         f"🔢 Номер: {invoice_number}\n"
         f"📸 Загружено фото: {photo_count}\n"
         f"🎥 Загружено видео: {video_count}\n"
+        f"📄 Загружено документов: {document_count}\n"
         f"📸 Осталось фото: {remaining_photos}\n"
         f"🎥 Осталось видео: {remaining_videos}\n"
+        f"📄 Осталось документов: {remaining_documents}\n"
         f"📁 Папка: {BASE_FOLDER}/{get_safe_folder_name(invoice_number)}\n\n"
     )
     
-    if photo_count == 0 and video_count == 0:
-        invoice_info += f"📸 Отправьте первое фото или видео оборудования"
-    elif remaining_photos <= 0 and remaining_videos <= 0:
+    if photo_count == 0 and video_count == 0 and document_count == 0:
+        invoice_info += f"📸 Отправьте первое фото, видео или документ оборудования"
+    elif remaining_photos <= 0 and remaining_videos <= 0 and remaining_documents <= 0:
         invoice_info += "❌ Достигнут лимит файлов\nИспользуйте /reset для новой накладной"
-    elif remaining_photos <= 5 or remaining_videos <= 2:
-        invoice_info += f"⚠️ Осталось мало файлов: {remaining_photos} фото, {remaining_videos} видео"
+    elif remaining_photos <= 5 or remaining_videos <= 2 or remaining_documents <= 5:
+        invoice_info += f"⚠️ Осталось мало файлов: {remaining_photos} фото, {remaining_videos} видео, {remaining_documents} документов"
     else:
-        invoice_info += f"✅ Можно загрузить еще {remaining_photos} фото и {remaining_videos} видео"
+        invoice_info += f"✅ Можно загрузить еще {remaining_photos} фото, {remaining_videos} видео и {remaining_documents} документов"
     
     await update.message.reply_text(invoice_info, parse_mode='Markdown')
 
@@ -498,19 +514,22 @@ def is_session_expired(user_id: int) -> bool:
         return False
     return (datetime.now() - last).total_seconds() > INACTIVITY_TIMEOUT_SECONDS
 
-def reset_user_session(user_id: int) -> tuple[bool, str, int, int]:
-    """Сбрасывает накладную пользователя. Возвращает (was_active, invoice, photo_count, video_count)."""
+def reset_user_session(user_id: int) -> tuple[bool, str, int, int, int]:
+    """Сбрасывает накладную пользователя. Возвращает (was_active, invoice, photo_count, video_count, document_count)."""
     if user_id in user_invoice:
         old_invoice = user_invoice[user_id]
         old_photo_count = invoice_photo_count.get(old_invoice, 0)
         old_video_count = invoice_video_count.get(old_invoice, 0)
+        old_document_count = invoice_document_count.get(old_invoice, 0)
         del user_invoice[user_id]
         if old_invoice in invoice_photo_count:
             del invoice_photo_count[old_invoice]
         if old_invoice in invoice_video_count:
             del invoice_video_count[old_invoice]
-        return True, old_invoice, old_photo_count, old_video_count
-    return False, "", 0, 0
+        if old_invoice in invoice_document_count:
+            del invoice_document_count[old_invoice]
+        return True, old_invoice, old_photo_count, old_video_count, old_document_count
+    return False, "", 0, 0, 0
 
 def touch_activity(user_id: int) -> None:
     """Обновляет время последней активности пользователя."""
@@ -571,7 +590,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверяем таймаут бездействия
     if is_session_expired(user_id):
-        was_active, old_invoice, old_photo_count, old_video_count = reset_user_session(user_id)
+        was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
         if was_active:
             await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
 
@@ -597,12 +616,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_invoice[user_id] = text
         invoice_photo_count[text] = 0
         invoice_video_count[text] = 0
+        invoice_document_count[text] = 0
         bot_stats["total_invoices"] += 1
         logger.info(f"✅ Создана новая накладная '{text}' для пользователя {user_id}")
-        await update.message.reply_text(f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото или видео оборудования.")
+        await update.message.reply_text(f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото, видео или документы оборудования.")
     else:
         logger.info(f"📸 Пользователь {user_id} уже имеет активную накладную '{user_invoice[user_id]}'")
-        await update.message.reply_text("📸 Я жду фото или видео, пришлите файл.")
+        await update.message.reply_text("📸 Я жду фото, видео или документы, пришлите файл.")
 
     # Обновляем время активности в конце обработки
     touch_activity(user_id)
@@ -611,7 +631,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     # Проверяем таймаут бездействия
     if is_session_expired(user_id):
-        was_active, old_invoice, old_photo_count, old_video_count = reset_user_session(user_id)
+        was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
         if was_active:
             await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
         # После сброса просим снова отправить накладную
@@ -789,7 +809,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверяем таймаут бездействия
     if is_session_expired(user_id):
-        was_active, old_invoice, old_photo_count, old_video_count = reset_user_session(user_id)
+        was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
         if was_active:
             await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
         # После сброса просим снова отправить накладную
@@ -970,14 +990,201 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Обновляем время активности после обработки видео
     touch_activity(user_id)
 
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает загрузку документов"""
+    user_id = update.message.from_user.id
+    
+    # Проверяем таймаут бездействия
+    if is_session_expired(user_id):
+        was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
+        if was_active:
+            await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
+        # После сброса просим снова отправить накладную
+        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        touch_activity(user_id)
+        return
+        
+    if user_id not in user_invoice:
+        await update.message.reply_text("❌ Сначала пришлите номер накладной командой /start")
+        touch_activity(user_id)
+        return
+
+    invoice_number = user_invoice[user_id]
+    
+    # Проверяем лимит документов на накладную
+    current_document_count = invoice_document_count.get(invoice_number, 0)
+    if current_document_count >= MAX_DOCUMENTS_PER_INVOICE:
+        await update.message.reply_text(
+            f"❌ Достигнут лимит документов для накладной '{invoice_number}'\n\n"
+            f"Максимум: {MAX_DOCUMENTS_PER_INVOICE} документов\n"
+            f"Текущее количество: {current_document_count}\n\n"
+            f"Используйте /reset для сброса и начала новой накладной."
+        )
+        return
+    
+    document_file = await update.message.document.get_file()
+    
+    # Проверка размера файла
+    if document_file.file_size > MAX_DOCUMENT_SIZE:
+        await update.message.reply_text(
+            f"❌ Документ слишком большой!\n\n"
+            f"Максимальный размер: {MAX_DOCUMENT_SIZE // (1024*1024)}MB\n"
+            f"Текущий размер: {document_file.file_size // (1024*1024)}MB"
+        )
+        return
+    
+    # Проверка формата файла
+    if not document_file.file_path or not any(document_file.file_path.lower().endswith(fmt) for fmt in SUPPORTED_DOCUMENT_FORMATS):
+        await update.message.reply_text(
+            "❌ Неподдерживаемый формат документа!\n\n"
+            "Поддерживаются только: PDF, DOC, DOCX, XLS, XLSX"
+        )
+        return
+
+    # Создаем уникальное имя файла с временной меткой
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    unique_id = str(uuid.uuid4())[:8]
+    safe_invoice = get_safe_folder_name(invoice_number)
+    
+    # Определяем расширение файла
+    file_extension = '.pdf'  # По умолчанию
+    if document_file.file_path:
+        for fmt in SUPPORTED_DOCUMENT_FORMATS:
+            if document_file.file_path.lower().endswith(fmt):
+                file_extension = fmt
+                break
+    
+    file_name = f"{timestamp}_{unique_id}{file_extension}"
+    
+    # Пути для загрузки
+    folder_path = f"/{BASE_FOLDER}/{safe_invoice}"
+    file_path = f"{folder_path}/{file_name}"
+
+    # Создаем папку на Яндекс.Диске, если нет
+    try:
+        if not y.exists(folder_path):
+            y.mkdir(folder_path)
+            logger.info(f"✅ Создана папка на Яндекс.Диске: {folder_path}")
+        else:
+            logger.info(f"📁 Папка уже существует: {folder_path}")
+            
+        # Проверяем доступность папки для записи
+        try:
+            test_file_path = f"{folder_path}/.test_write"
+            upload_text_to_yandex(test_file_path, "test")
+            y.remove(test_file_path)
+            logger.info(f"✅ Папка доступна для записи: {folder_path}")
+        except Exception as write_test_error:
+            logger.warning(f"⚠️ Проблема с правами записи в папку {folder_path}: {write_test_error}")
+            await update.message.reply_text("⚠️ Предупреждение: возможны проблемы с правами записи в папку.")
+            
+    except yadisk.exceptions.YaDiskError as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Ошибка Яндекс.Диска при создании папки: {e}"
+        logger.error(error_msg)
+        
+        # Более детальные сообщения об ошибках
+        if "quota" in str(e).lower():
+            await update.message.reply_text("❌ Превышен лимит Яндекс.Диска\n\nОбратитесь к администратору для увеличения места.")
+        elif "forbidden" in str(e).lower() or "access" in str(e).lower():
+            await update.message.reply_text("❌ Нет доступа к Яндекс.Диску\n\nПроверьте токен и права доступа.")
+        elif "network" in str(e).lower() or "timeout" in str(e).lower():
+            await update.message.reply_text("❌ Проблема с сетью\n\nПопробуйте позже или проверьте интернет-соединение.")
+        else:
+            await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
+        return
+    except Exception as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Неожиданная ошибка при создании папки: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
+        return
+
+    # Сохраняем документ во временный файл
+    temp_path = f"/tmp/{document_file.file_id}_{unique_id}{file_extension}"
+    try:
+        await document_file.download_to_drive(temp_path)
+        logger.info(f"📥 Документ загружен во временную папку: {temp_path}")
+        
+        # Проверяем, что файл действительно загрузился
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+            raise Exception("Документ не был загружен или имеет нулевой размер")
+            
+    except Exception as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Ошибка при загрузке документа: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте еще раз или отправьте файл меньшего размера.")
+        return
+
+    # Загружаем на Яндекс.Диск
+    try:
+        y.upload(temp_path, file_path, overwrite=True)
+        bot_stats["total_documents"] += 1
+        invoice_document_count[invoice_number] = current_document_count + 1
+        
+        logger.info(f"✅ Документ загружен на Яндекс.Диск: {file_path}")
+        await update.message.reply_text(
+            f"✅ Документ успешно сохранен!\n\n"
+            f"📋 Накладная: {invoice_number}\n"
+            f"📁 Папка: {BASE_FOLDER}/{safe_invoice}\n"
+            f"📄 Файл: {file_name}\n"
+            f"📏 Размер: {format_file_size(document_file.file_size)}\n"
+            f"📊 Документы в накладной: {invoice_document_count[invoice_number]}/{MAX_DOCUMENTS_PER_INVOICE}"
+        )
+        
+        # Предупреждение при приближении к лимиту
+        if invoice_document_count[invoice_number] >= MAX_DOCUMENTS_PER_INVOICE * 0.8:
+            await update.message.reply_text(
+                f"⚠️ Внимание! Приближается лимит документов для накладной '{invoice_number}'\n"
+                f"Осталось: {MAX_DOCUMENTS_PER_INVOICE - invoice_document_count[invoice_number]} документов"
+            )
+        
+        # Показываем информацию о загруженном документе
+        await update.message.reply_text(
+            f"📄 Документ загружен! Всего в накладной: {invoice_document_count[invoice_number]}/{MAX_DOCUMENTS_PER_INVOICE}\n\n"
+            f"Продолжайте загружать файлы или используйте /reset для завершения накладной."
+        )
+            
+    except yadisk.exceptions.YaDiskError as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Ошибка Яндекс.Диска при загрузке документа: {e}"
+        logger.error(error_msg)
+        
+        # Более детальные сообщения об ошибках
+        if "quota" in str(e).lower():
+            await update.message.reply_text("❌ Превышен лимит Яндекс.Диска\n\nОбратитесь к администратору для увеличения места.")
+        elif "network" in str(e).lower() or "timeout" in str(e).lower():
+            await update.message.reply_text("❌ Проблема с сетью\n\nПопробуйте позже или проверьте интернет-соединение.")
+        else:
+            await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
+    except Exception as e:
+        bot_stats["errors"] += 1
+        error_msg = f"Неожиданная ошибка при загрузке на Яндекс.Диск: {e}"
+        logger.error(error_msg)
+        await update.message.reply_text(f"❌ {error_msg}\n\nПопробуйте позже или обратитесь к администратору.")
+    finally:
+        # Удаляем локальный файл
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+                logger.info(f"🗑️ Временный файл удален: {temp_path}")
+        except Exception as e:
+            logger.warning(f"Не удалось удалить временный файл {temp_path}: {e}")
+            # Пытаемся удалить позже через cleanup
+
+    # Обновляем время активности после обработки документа
+    touch_activity(user_id)
+
 async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    was_active, old_invoice, old_photo_count, old_video_count = reset_user_session(user_id)
+    was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
     if was_active:
         await update.message.reply_text(
             f"🔄 Накладная '{old_invoice}' сброшена.\n"
             f"📸 Было загружено фото: {old_photo_count}\n"
-            f"🎥 Было загружено видео: {old_video_count}\n\n"
+            f"🎥 Было загружено видео: {old_video_count}\n"
+            f"📄 Было загружено документов: {old_document_count}\n\n"
             f"Пришлите новый номер накладной."
         )
     else:
@@ -991,8 +1198,8 @@ def cleanup_temp_files():
         if os.path.exists(temp_dir):
             for filename in os.listdir(temp_dir):
                 # Ищем файлы, созданные нашим ботом
-                if (filename.endswith(('.jpg', '.jpeg', '.png', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.3g2', '.f4v', '.asf')) and 
-                    ('photo_file_' in filename or 'video_file_' in filename or filename.count('_') >= 2)):
+                if (filename.endswith(('.jpg', '.jpeg', '.png', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.3g2', '.f4v', '.asf', '.pdf', '.doc', '.docx', '.xls', '.xlsx')) and 
+                    ('photo_file_' in filename or 'video_file_' in filename or 'document_file_' in filename or filename.count('_') >= 2)):
                     file_path = os.path.join(temp_dir, filename)
                     try:
                         # Удаляем файлы старше 1 часа
@@ -1166,11 +1373,13 @@ async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invoice_number = user_invoice[user_id]
             photo_count = invoice_photo_count.get(invoice_number, 0)
             video_count = invoice_video_count.get(invoice_number, 0)
+            document_count = invoice_document_count.get(invoice_number, 0)
             user_info_text += (
                 f"📋 **Текущая накладная:**\n"
                 f"• Номер: {invoice_number}\n"
                 f"• Загружено фото: {photo_count}/{MAX_PHOTOS_PER_INVOICE}\n"
                 f"• Загружено видео: {video_count}/{MAX_VIDEOS_PER_INVOICE}\n"
+                f"• Загружено документов: {document_count}/{MAX_DOCUMENTS_PER_INVOICE}\n"
             )
         else:
             user_info_text += "📋 **Текущая накладная:** Нет активной накладной\n"
@@ -1226,6 +1435,7 @@ def main():
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         app.add_handler(MessageHandler(filters.VIDEO, handle_video))
+        app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
         logger.info("✅ Все обработчики команд зарегистрированы")
         logger.info(f"🌐 Запуск webhook на порту {os.environ.get('PORT', 8443)}")
