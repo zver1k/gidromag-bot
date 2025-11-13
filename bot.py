@@ -5,8 +5,8 @@ import signal
 import sys
 from datetime import datetime
 import uuid
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
 import yadisk
 
 # Импортируем конфигурацию
@@ -302,6 +302,32 @@ bot_stats = {
     "start_time": datetime.now()
 }
 
+
+def get_effective_message(update: Update):
+    """Возвращает сообщение для ответа вне зависимости от типа обновления."""
+    if update.message:
+        return update.message
+    if update.callback_query and update.callback_query.message:
+        return update.callback_query.message
+    return None
+
+
+def get_main_menu_keyboard() -> InlineKeyboardMarkup:
+    """Основное меню бота с inline-кнопками."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📋 Текущая накладная", callback_data="menu_current"),
+            InlineKeyboardButton("🔄 Сбросить накладную", callback_data="menu_reset"),
+        ],
+        [
+            InlineKeyboardButton("📊 Статистика", callback_data="menu_stats"),
+            InlineKeyboardButton("ℹ️ Помощь", callback_data="menu_help"),
+        ],
+        [
+            InlineKeyboardButton("🔍 Статус сервисов", callback_data="menu_status"),
+        ],
+    ])
+
 # Константы для валидации
 # MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 # MAX_PHOTOS_PER_INVOICE = 50
@@ -332,6 +358,11 @@ def get_uptime() -> str:
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статистику бота"""
+    message = get_effective_message(update)
+    if not message:
+        logger.warning("Не удалось определить сообщение для ответа в stats")
+        return
+
     uptime = get_uptime()
     active_users = len(user_invoice)
     
@@ -360,10 +391,19 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔍 Используйте /status для проверки сервисов"
     )
     
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
+    await message.reply_text(
+        stats_text,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu_keyboard() if update.callback_query else None
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает справку по командам"""
+    message = get_effective_message(update)
+    if not message:
+        logger.warning("Не удалось определить сообщение для ответа в help_command")
+        return
+
     help_text = (
         f"🤖 **Справка по командам**\n\n"
         f"📋 **Основные команды:**\n"
@@ -409,11 +449,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Попросите пользователя отправить /start боту @userinfobot"
     )
     
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    await message.reply_text(
+        help_text,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu_keyboard() if update.callback_query else None
+    )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает статус бота и подключения к сервисам"""
     try:
+        message = get_effective_message(update)
+        if not message:
+            logger.warning("Не удалось определить сообщение для ответа в status")
+            return
+
         # Проверяем подключение к Яндекс.Диску
         disk_info = get_disk_info_safe()
         
@@ -457,23 +506,39 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Авто-выход: Отключен"
         )
         
-        await update.message.reply_text(status_text, parse_mode='Markdown')
+        await message.reply_text(
+            status_text,
+            parse_mode='Markdown',
+            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+        )
         
     except yadisk.exceptions.YaDiskError as e:
         error_msg = f"Ошибка при проверке статуса Яндекс.Диска: {e}"
         logger.error(error_msg)
-        await update.message.reply_text(f"❌ {error_msg}")
+        message = get_effective_message(update)
+        if message:
+            await message.reply_text(f"❌ {error_msg}")
     except Exception as e:
         error_msg = f"Ошибка при проверке статуса: {e}"
         logger.error(error_msg)
-        await update.message.reply_text(f"❌ {error_msg}")
+        message = get_effective_message(update)
+        if message:
+            await message.reply_text(f"❌ {error_msg}")
 
 async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает информацию о текущей накладной пользователя"""
-    user_id = update.message.from_user.id
+    message = get_effective_message(update)
+    if not message:
+        logger.warning("Не удалось определить сообщение для ответа в current_invoice")
+        return
+
+    user_id = update.effective_user.id
     
     if user_id not in user_invoice:
-        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        await message.reply_text(
+            "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
+            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+        )
         return
     
     invoice_number = user_invoice[user_id]
@@ -505,7 +570,11 @@ async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         invoice_info += f"✅ Можно загрузить еще {remaining_photos} фото, {remaining_videos} видео и {remaining_documents} документов"
     
-    await update.message.reply_text(invoice_info, parse_mode='Markdown')
+    await message.reply_text(
+        invoice_info,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu_keyboard() if update.callback_query else None
+    )
 
 def is_session_expired(user_id: int) -> bool:
     """Проверяет, истекла ли сессия пользователя по таймауту бездействия."""
@@ -580,6 +649,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Привет! Пришли номер накладной:\n\n"
         f"📸 Загружайте фото и видео оборудования. Используйте /reset для завершения накладной."
+        ,
+        reply_markup=get_main_menu_keyboard()
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -619,10 +690,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invoice_document_count[text] = 0
         bot_stats["total_invoices"] += 1
         logger.info(f"✅ Создана новая накладная '{text}' для пользователя {user_id}")
-        await update.message.reply_text(f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото, видео или документы оборудования.")
+        await update.message.reply_text(
+            f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото, видео или документы оборудования.",
+            reply_markup=get_main_menu_keyboard()
+        )
     else:
         logger.info(f"📸 Пользователь {user_id} уже имеет активную накладную '{user_invoice[user_id]}'")
-        await update.message.reply_text("📸 Я жду фото, видео или документы, пришлите файл.")
+        await update.message.reply_text(
+            "📸 Я жду фото, видео или документы, пришлите файл.",
+            reply_markup=get_main_menu_keyboard()
+        )
 
     # Обновляем время активности в конце обработки
     touch_activity(user_id)
@@ -1177,19 +1254,67 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     touch_activity(user_id)
 
 async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+    message = get_effective_message(update)
+    if not message:
+        logger.warning("Не удалось определить сообщение для ответа в reset_invoice")
+        return
+
+    user_id = update.effective_user.id
     was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
     if was_active:
-        await update.message.reply_text(
+        await message.reply_text(
             f"🔄 Накладная '{old_invoice}' сброшена.\n"
             f"📸 Было загружено фото: {old_photo_count}\n"
             f"🎥 Было загружено видео: {old_video_count}\n"
             f"📄 Было загружено документов: {old_document_count}\n\n"
-            f"Пришлите новый номер накладной."
+            f"Пришлите новый номер накладной.",
+            reply_markup=get_main_menu_keyboard() if update.callback_query else None
         )
     else:
-        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        await message.reply_text(
+            "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
+            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+        )
     touch_activity(user_id)
+
+
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет меню с inline-кнопками."""
+    message = get_effective_message(update)
+    if not message:
+        logger.warning("Не удалось определить сообщение для ответа в show_menu")
+        return
+
+    await message.reply_text(
+        "🛠️ Выберите действие:",
+        reply_markup=get_main_menu_keyboard()
+    )
+
+
+async def handle_main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатия на inline-кнопки главного меню."""
+    query = update.callback_query
+    if not query:
+        logger.warning("Получен callback без данных")
+        return
+
+    await query.answer()
+    data = query.data or ""
+
+    if data == "menu_current":
+        await current_invoice(update, context)
+    elif data == "menu_reset":
+        await reset_invoice(update, context)
+    elif data == "menu_stats":
+        await stats(update, context)
+    elif data == "menu_help":
+        await help_command(update, context)
+    elif data == "menu_status":
+        await status(update, context)
+    else:
+        if query.message:
+            await query.message.reply_text("❓ Неизвестная команда кнопки.")
+
 
 def cleanup_temp_files():
     """Очищает временные файлы в /tmp"""
@@ -1428,10 +1553,12 @@ def main():
         app.add_handler(CommandHandler("current", current_invoice))
         app.add_handler(CommandHandler("cleanup", cleanup))
         app.add_handler(CommandHandler("help", help_command))
+        app.add_handler(CommandHandler("menu", show_menu))
         app.add_handler(CommandHandler("adduser", add_user))
         app.add_handler(CommandHandler("removeuser", remove_user))
         app.add_handler(CommandHandler("listusers", list_users))
         app.add_handler(CommandHandler("userinfo", user_info))
+        app.add_handler(CallbackQueryHandler(handle_main_menu_callback, pattern="^menu_"))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
         app.add_handler(MessageHandler(filters.VIDEO, handle_video))
