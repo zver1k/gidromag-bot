@@ -312,8 +312,23 @@ def get_effective_message(update: Update):
     return None
 
 
-def get_main_menu_keyboard() -> InlineKeyboardMarkup:
+def get_user_id(update: Update) -> int | None:
+    """Возвращает ID пользователя из обновления, если он доступен."""
+    if update.effective_user:
+        return update.effective_user.id
+    return None
+
+
+def get_main_menu_keyboard(user_id: int | None = None) -> InlineKeyboardMarkup:
     """Основное меню бота с inline-кнопками."""
+    has_invoice = user_id is not None and user_id in user_invoice
+
+    if not has_invoice:
+        return InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Создать накладную", callback_data="menu_create")],
+            [InlineKeyboardButton("ℹ️ Помощь", callback_data="menu_help")],
+        ])
+
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("📋 Текущая накладная", callback_data="menu_current"),
@@ -323,10 +338,12 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📊 Статистика", callback_data="menu_stats"),
             InlineKeyboardButton("ℹ️ Помощь", callback_data="menu_help"),
         ],
-        [
-            InlineKeyboardButton("🔍 Статус сервисов", callback_data="menu_status"),
-        ],
     ])
+
+
+def get_main_menu_for_update(update: Update) -> InlineKeyboardMarkup:
+    """Возвращает меню, учитывая состояние пользователя из обновления."""
+    return get_main_menu_keyboard(get_user_id(update))
 
 # Константы для валидации
 # MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -394,7 +411,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(
         stats_text,
         parse_mode='Markdown',
-        reply_markup=get_main_menu_keyboard() if update.callback_query else None
+        reply_markup=get_main_menu_keyboard(get_user_id(update))
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -452,7 +469,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(
         help_text,
         parse_mode='Markdown',
-        reply_markup=get_main_menu_keyboard() if update.callback_query else None
+        reply_markup=get_main_menu_keyboard(get_user_id(update))
     )
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -509,7 +526,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text(
             status_text,
             parse_mode='Markdown',
-            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+            reply_markup=get_main_menu_keyboard(get_user_id(update))
         )
         
     except yadisk.exceptions.YaDiskError as e:
@@ -537,7 +554,7 @@ async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_invoice:
         await message.reply_text(
             "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
-            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+            reply_markup=get_main_menu_keyboard(get_user_id(update))
         )
         return
     
@@ -573,7 +590,7 @@ async def current_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await message.reply_text(
         invoice_info,
         parse_mode='Markdown',
-        reply_markup=get_main_menu_keyboard() if update.callback_query else None
+        reply_markup=get_main_menu_keyboard(get_user_id(update))
     )
 
 def is_session_expired(user_id: int) -> bool:
@@ -650,7 +667,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Привет! Пришли номер накладной:\n\n"
         f"📸 Загружайте фото и видео оборудования. Используйте /reset для завершения накладной."
         ,
-        reply_markup=get_main_menu_keyboard()
+        reply_markup=get_main_menu_keyboard(user_id)
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -680,7 +697,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not is_valid:
         logger.warning(f"❌ Некорректный номер накладной '{text}': {error_message}")
-        await update.message.reply_text(f"❌ {error_message}\n\nПопробуйте еще раз или используйте команду /reset для сброса.")
+        await update.message.reply_text(
+            f"❌ {error_message}\n\nПопробуйте еще раз или используйте команду /reset для сброса.",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         return
 
     if user_id not in user_invoice:
@@ -692,13 +712,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"✅ Создана новая накладная '{text}' для пользователя {user_id}")
         await update.message.reply_text(
             f"✅ Накладная '{text}' сохранена.\n\nТеперь пришлите фото, видео или документы оборудования.",
-            reply_markup=get_main_menu_keyboard()
+            reply_markup=get_main_menu_keyboard(user_id)
         )
     else:
         logger.info(f"📸 Пользователь {user_id} уже имеет активную накладную '{user_invoice[user_id]}'")
         await update.message.reply_text(
             "📸 Я жду фото, видео или документы, пришлите файл.",
-            reply_markup=get_main_menu_keyboard()
+            reply_markup=get_main_menu_keyboard(user_id)
         )
 
     # Обновляем время активности в конце обработки
@@ -712,11 +732,17 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if was_active:
             await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
         # После сброса просим снова отправить накладную
-        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        await update.message.reply_text(
+            "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         touch_activity(user_id)
         return
     if user_id not in user_invoice:
-        await update.message.reply_text("❌ Сначала пришлите номер накладной командой /start")
+        await update.message.reply_text(
+            "❌ Сначала пришлите номер накладной командой /start",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         touch_activity(user_id)
         return
 
@@ -890,12 +916,18 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if was_active:
             await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
         # После сброса просим снова отправить накладную
-        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        await update.message.reply_text(
+            "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         touch_activity(user_id)
         return
         
     if user_id not in user_invoice:
-        await update.message.reply_text("❌ Сначала пришлите номер накладной командой /start")
+        await update.message.reply_text(
+            "❌ Сначала пришлите номер накладной командой /start",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         touch_activity(user_id)
         return
 
@@ -1077,12 +1109,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if was_active:
             await update.message.reply_text(INFO_MESSAGES.get("session_expired"))
         # После сброса просим снова отправить накладную
-        await update.message.reply_text("ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.")
+        await update.message.reply_text(
+            "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         touch_activity(user_id)
         return
         
     if user_id not in user_invoice:
-        await update.message.reply_text("❌ Сначала пришлите номер накладной командой /start")
+        await update.message.reply_text(
+            "❌ Сначала пришлите номер накладной командой /start",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
         touch_activity(user_id)
         return
 
@@ -1268,12 +1306,12 @@ async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎥 Было загружено видео: {old_video_count}\n"
             f"📄 Было загружено документов: {old_document_count}\n\n"
             f"Пришлите новый номер накладной.",
-            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+            reply_markup=get_main_menu_keyboard(get_user_id(update))
         )
     else:
         await message.reply_text(
             "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
-            reply_markup=get_main_menu_keyboard() if update.callback_query else None
+            reply_markup=get_main_menu_keyboard(get_user_id(update))
         )
     touch_activity(user_id)
 
@@ -1287,7 +1325,28 @@ async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await message.reply_text(
         "🛠️ Выберите действие:",
-        reply_markup=get_main_menu_keyboard()
+        reply_markup=get_main_menu_for_update(update)
+    )
+
+
+async def prompt_invoice_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подсказывает пользователю создать накладную."""
+    message = get_effective_message(update)
+    if not message:
+        logger.warning("Не удалось определить сообщение для ответа в prompt_invoice_creation")
+        return
+
+    user_id = get_user_id(update)
+    if user_id is not None and user_id in user_invoice:
+        await message.reply_text(
+            "ℹ️ У вас уже есть активная накладная. Используйте кнопки меню для управления.",
+            reply_markup=get_main_menu_keyboard(user_id)
+        )
+        return
+
+    await message.reply_text(
+        "✍️ Отправьте номер накладной (3-50 символов: буквы, цифры, дефис, подчеркивание, точка).",
+        reply_markup=get_main_menu_keyboard(user_id)
     )
 
 
@@ -1309,8 +1368,8 @@ async def handle_main_menu_callback(update: Update, context: ContextTypes.DEFAUL
         await stats(update, context)
     elif data == "menu_help":
         await help_command(update, context)
-    elif data == "menu_status":
-        await status(update, context)
+    elif data == "menu_create":
+        await prompt_invoice_creation(update, context)
     else:
         if query.message:
             await query.message.reply_text("❓ Неизвестная команда кнопки.")
