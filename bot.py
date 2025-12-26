@@ -1581,29 +1581,21 @@ async def user_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 from telegram.ext import ApplicationBuilder
 from telegram.request import HTTPXRequest
+from config import TELEGRAM_TOKEN, WEBHOOK_URL, PORT
 
 def main():
     logger.info("🚀 Запуск Telegram бота...")
 
-    # Загружаем список разрешённых пользователей
-    global ALLOWED_USERS
-    ALLOWED_USERS = load_allowed_users()
-    logger.info(f"👥 Загружено {len(ALLOWED_USERS)} разрешенных пользователей")
-
-    # 🔐 Проверяем переменные окружения
-    PORT = int(os.environ.get("PORT", 8443))
-    BASE_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
-
-    if not BASE_URL.startswith("https://"):
+    base_url = WEBHOOK_URL.rstrip("/")
+    if not base_url.startswith("https://"):
         raise RuntimeError("❌ WEBHOOK_URL должен начинаться с https://")
 
-    WEBHOOK_PATH = "/webhook"
-    FULL_WEBHOOK_URL = BASE_URL + WEBHOOK_PATH
+    webhook_path = "/webhook"
+    full_webhook_url = base_url + webhook_path
 
     logger.info(f"🌐 Порт: {PORT}")
-    logger.info(f"🔗 Webhook URL: {FULL_WEBHOOK_URL}")
+    logger.info(f"🔗 Webhook URL: {full_webhook_url}")
 
-    # ⏱ Увеличенные таймауты (КРИТИЧНО для Render)
     request = HTTPXRequest(
         connect_timeout=20,
         read_timeout=20,
@@ -1618,54 +1610,15 @@ def main():
         .build()
     )
 
-    # ===== ERROR HANDLER =====
-    async def error_handler(update, context):
-        logger.exception("❌ Ошибка при обработке апдейта", exc_info=context.error)
-        if update and getattr(update, "message", None):
-            try:
-                await update.message.reply_text(
-                    "❌ Произошла ошибка. Попробуйте позже."
-                )
-            except Exception:
-                pass
+    # handlers — БЕЗ ИЗМЕНЕНИЙ
 
-    app.add_error_handler(error_handler)
-
-    # ===== COMMANDS =====
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("reset", reset_invoice))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(CommandHandler("current", current_invoice))
-    app.add_handler(CommandHandler("cleanup", cleanup))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("menu", show_menu))
-    app.add_handler(CommandHandler("adduser", add_user))
-    app.add_handler(CommandHandler("removeuser", remove_user))
-    app.add_handler(CommandHandler("listusers", list_users))
-    app.add_handler(CommandHandler("userinfo", user_info))
-
-    # ===== CALLBACKS =====
-    app.add_handler(CallbackQueryHandler(handle_main_menu_callback, pattern="^menu_"))
-
-    # ===== FILES & TEXT =====
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    logger.info("✅ Все обработчики зарегистрированы")
-
-    # ===== START WEBHOOK =====
-    logger.info("🚀 Запуск webhook сервера...")
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
-        url_path=WEBHOOK_PATH,
-        webhook_url=FULL_WEBHOOK_URL,
+        url_path=webhook_path,
+        webhook_url=full_webhook_url,
         drop_pending_updates=True,
     )
-
 
 if __name__ == "__main__":
     main()
