@@ -3,6 +3,7 @@ import logging
 import re
 import signal
 import sys
+import asyncio
 from datetime import datetime
 import uuid
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -171,6 +172,99 @@ def is_user_allowed(user_id: int) -> bool:
     """Проверяет, имеет ли пользователь доступ к боту"""
     # Администраторы всегда имеют доступ
     return user_id in ALLOWED_USERS or user_id in ADMIN_IDS
+
+# Асинхронные обертки для предотвращения блокировки Event Loop
+async def upload_text_to_yandex_async(remote_path: str, content: str) -> None:
+    temp_path = f"/tmp/upload_text_{uuid.uuid4().hex}.txt"
+    with open(temp_path, 'w', encoding='utf-8') as tf:
+        tf.write(content)
+    try:
+        await asyncio.to_thread(y.upload, temp_path, remote_path, overwrite=True)
+    finally:
+        try:
+            os.remove(temp_path)
+        except Exception:
+            pass
+
+async def refresh_allowed_users_from_remote_async() -> bool:
+    """Асинхронно обновляет ALLOWED_USERS с удаленного файла"""
+    try:
+        if await asyncio.to_thread(y.exists, REMOTE_USERS_PATH):
+            temp_path = f"/tmp/allowed_users_{uuid.uuid4().hex}.txt"
+            await asyncio.to_thread(y.download, REMOTE_USERS_PATH, temp_path)
+            with open(temp_path, 'r', encoding='utf-8') as f:
+                users = [int(line.strip()) for line in f if line.strip().isdigit()]
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+            if users:
+                global ALLOWED_USERS
+                ALLOWED_USERS = sorted(set(users))
+                logger.info(f"🔄 Обновлен список разрешенных пользователей из удаленного файла")
+            return True
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось обновить список разрешенных пользователей: {e}")
+    return False
+
+async def save_allowed_users_async(users: list) -> bool:
+    """Асинхронно сохраняет список разрешенных пользователей"""
+    try:
+        content = "".join(f"{uid}\n" for uid in sorted(users))
+        try:
+            base_folder_path = f"/{BASE_FOLDER}"
+            if not await asyncio.to_thread(y.exists, base_folder_path):
+                await asyncio.to_thread(y.mkdir, base_folder_path)
+            await upload_text_to_yandex_async(REMOTE_USERS_PATH, content)
+            logger.info(f"✅ Список пользователей сохранен на Яндекс.Диске")
+        except Exception as remote_err:
+            logger.error(f"❌ Ошибка сохранения: {remote_err}")
+            return False
+
+        try:
+            with open(USERS_FILE, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except Exception:
+            pass
+
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения пользователей: {e}")
+        return False
+
+async def add_user_access_async(user_id: int) -> bool:
+    global ALLOWED_USERS
+    if user_id not in ALLOWED_USERS:
+        ALLOWED_USERS.append(user_id)
+        await save_allowed_users_async(ALLOWED_USERS)
+        logger.info(f"✅ Добавлен доступ для {user_id}")
+        return True
+    return False
+
+async def remove_user_access_async(user_id: int) -> bool:
+    global ALLOWED_USERS
+    if user_id in ALLOWED_USERS:
+        ALLOWED_USERS.remove(user_id)
+        await save_allowed_users_async(ALLOWED_USERS)
+        logger.info(f"✅ Удален доступ для {user_id}")
+        return True
+    return False
+
+async def get_disk_info_safe_async():
+    """Асинхронно получает информацию о диске"""
+    try:
+        disk_info = await asyncio.to_thread(y.get_disk_info)
+        if hasattr(disk_info, 'space') and hasattr(disk_info.space, 'free'):
+            return {'free': disk_info.space.free, 'total': disk_info.space.total, 'available': True}
+        elif hasattr(disk_info, 'free'):
+            return {'free': disk_info.free, 'total': disk_info.total, 'available': True}
+        elif hasattr(disk_info, 'available'):
+            return {'free': disk_info.available, 'total': disk_info.total if hasattr(disk_info, 'total') else 0, 'available': True}
+        else:
+            return {'free': 0, 'total': 0, 'available': False}
+    except Exception as e:
+        logger.error(f"❌ Ошибка при получении информации о диске: {e}")
+        return {'free': 0, 'total': 0, 'available': False}
 
 def signal_handler(signum, _):
     """Обработчик сигналов для корректного завершения"""
@@ -481,10 +575,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Проверяем подключение к Яндекс.Диску
-        disk_info = get_disk_info_safe()
+        disk_info = await get_disk_info_safe_async()
         
         # Проверяем доступность базовой папки
-        base_folder_exists = y.exists(f"/{BASE_FOLDER}")
+        base_folder_exists = await asyncio.to_thread(y.exists, f"/{BASE_FOLDER}")
         
         status_text = (
             f"🔍 **Статус бота**\n\n"
@@ -684,7 +778,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Проверка доступа пользователя (с попыткой ленивой синхронизации из удаленного файла)
     if not is_user_allowed(user_id):
-        if refresh_allowed_users_from_remote() and is_user_allowed(user_id):
+        if await refresh_allowed_users_from_remote_async() and is_user_allowed(user_id):
             logger.info(f"✅ Пользователь {user_id} получил доступ после синхронизации")
         else:
             logger.warning(f"🚫 Пользователь {user_id} не имеет доступа к боту")
@@ -792,8 +886,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Создаем папку на Яндекс.Диске, если нет
     try:
-        if not y.exists(folder_path):
-            y.mkdir(folder_path)
+        if not await asyncio.to_thread(y.exists, folder_path):
+            await asyncio.to_thread(y.mkdir, folder_path)
             logger.info(f"✅ Создана папка на Яндекс.Диске: {folder_path}")
         else:
             logger.info(f"📁 Папка уже существует: {folder_path}")
@@ -801,8 +895,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем доступность папки для записи
         try:
             test_file_path = f"{folder_path}/.test_write"
-            upload_text_to_yandex(test_file_path, "test")
-            y.remove(test_file_path)
+            await upload_text_to_yandex_async(test_file_path, "test")
+            await asyncio.to_thread(y.remove, test_file_path)
             logger.info(f"✅ Папка доступна для записи: {folder_path}")
         except Exception as write_test_error:
             logger.warning(f"⚠️ Проблема с правами записи в папку {folder_path}: {write_test_error}")
@@ -849,7 +943,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Загружаем на Яндекс.Диск
     try:
-        y.upload(temp_path, file_path, overwrite=True)
+        await asyncio.to_thread(y.upload, temp_path, file_path, overwrite=True)
         bot_stats["total_photos"] += 1
         invoice_photo_count[invoice_number] = current_photo_count + 1
         
@@ -985,8 +1079,8 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Создаем папку на Яндекс.Диске, если нет
     try:
-        if not y.exists(folder_path):
-            y.mkdir(folder_path)
+        if not await asyncio.to_thread(y.exists, folder_path):
+            await asyncio.to_thread(y.mkdir, folder_path)
             logger.info(f"✅ Создана папка на Яндекс.Диске: {folder_path}")
         else:
             logger.info(f"📁 Папка уже существует: {folder_path}")
@@ -994,8 +1088,8 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем доступность папки для записи
         try:
             test_file_path = f"{folder_path}/.test_write"
-            upload_text_to_yandex(test_file_path, "test")
-            y.remove(test_file_path)
+            await upload_text_to_yandex_async(test_file_path, "test")
+            await asyncio.to_thread(y.remove, test_file_path)
             logger.info(f"✅ Папка доступна для записи: {folder_path}")
         except Exception as write_test_error:
             logger.warning(f"⚠️ Проблема с правами записи в папку {folder_path}: {write_test_error}")
@@ -1042,7 +1136,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Загружаем на Яндекс.Диск
     try:
-        y.upload(temp_path, file_path, overwrite=True)
+        await asyncio.to_thread(y.upload, temp_path, file_path, overwrite=True)
         bot_stats["total_videos"] += 1
         invoice_video_count[invoice_number] = current_video_count + 1
         
@@ -1177,8 +1271,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Создаем папку на Яндекс.Диске, если нет
     try:
-        if not y.exists(folder_path):
-            y.mkdir(folder_path)
+        if not await asyncio.to_thread(y.exists, folder_path):
+            await asyncio.to_thread(y.mkdir, folder_path)
             logger.info(f"✅ Создана папка на Яндекс.Диске: {folder_path}")
         else:
             logger.info(f"📁 Папка уже существует: {folder_path}")
@@ -1186,8 +1280,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем доступность папки для записи
         try:
             test_file_path = f"{folder_path}/.test_write"
-            upload_text_to_yandex(test_file_path, "test")
-            y.remove(test_file_path)
+            await upload_text_to_yandex_async(test_file_path, "test")
+            await asyncio.to_thread(y.remove, test_file_path)
             logger.info(f"✅ Папка доступна для записи: {folder_path}")
         except Exception as write_test_error:
             logger.warning(f"⚠️ Проблема с правами записи в папку {folder_path}: {write_test_error}")
@@ -1234,7 +1328,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Загружаем на Яндекс.Диск
     try:
-        y.upload(temp_path, file_path, overwrite=True)
+        await asyncio.to_thread(y.upload, temp_path, file_path, overwrite=True)
         bot_stats["total_documents"] += 1
         invoice_document_count[invoice_number] = current_document_count + 1
         
@@ -1439,7 +1533,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Добавляем пользователя
-        if add_user_access(new_user_id):
+        if await add_user_access_async(new_user_id):
             await update.message.reply_text(
                 f"✅ Пользователь {new_user_id} добавлен в список разрешенных!\n\n"
                 f"Теперь он может использовать бота."
@@ -1485,7 +1579,7 @@ async def remove_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         # Удаляем пользователя
-        if remove_user_access(target_user_id):
+        if await remove_user_access_async(target_user_id):
             await update.message.reply_text(
                 f"✅ Пользователь {target_user_id} удален из списка разрешенных!\n\n"
                 f"Теперь он не может использовать бота."
