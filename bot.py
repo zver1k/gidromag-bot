@@ -1073,6 +1073,23 @@ async def reset_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning("Не удалось определить сообщение для ответа в reset_invoice")
         return
 
+    user_id = update.effective_user.id
+    was_active, old_invoice, old_photo_count, old_video_count, old_document_count = reset_user_session(user_id)
+    if was_active:
+        await message.reply_text(
+            f"🔄 Накладная '{old_invoice}' сброшена.\n"
+            f"📸 Было загружено фото: {old_photo_count}\n"
+            f"🎥 Было загружено видео: {old_video_count}\n"
+            f"📄 Было загружено документов: {old_document_count}\n\n"
+            f"Пришлите новый номер накладной.",
+            reply_markup=get_main_menu_keyboard(get_user_id(update))
+        )
+    else:
+        await message.reply_text(
+            "ℹ️ У вас нет активной накладной.\n\nИспользуйте /start для начала работы.",
+            reply_markup=get_main_menu_keyboard(get_user_id(update))
+        )
+    touch_activity(user_id)
 
 async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет меню с inline-кнопками."""
