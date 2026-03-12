@@ -486,7 +486,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_documents_in_invoices = sum(invoice_document_count.values())
     
     stats_text = (
-        f"📊 **Статистика бота**\n\n"
+        f"📊 <b>Статистика бота</b>\n\n"
         f"⏱️ Время работы: {uptime}\n"
         f"👥 Активных пользователей: {active_users}\n"
         f"📋 Активных накладных: {unique_invoices}\n"
@@ -504,7 +504,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await message.reply_text(
         stats_text,
-        parse_mode='Markdown',
+        parse_mode='HTML',
         reply_markup=get_main_menu_keyboard(get_user_id(update))
     )
 
@@ -516,8 +516,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     help_text = (
-        f"🤖 **Справка по командам**\n\n"
-        f"📋 **Основные команды:**\n"
+        f"🤖 <b>Справка по командам</b>\n\n"
+        f"📋 <b>Основные команды:</b>\n"
         f"• /start - Начать работу с новой накладной\n"
         f"• /reset - Сбросить текущую накладную\n"
         f"• /current - Показать текущую накладную\n"
@@ -525,18 +525,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• /status - Показать статус бота и сервисов\n"
         f"• /help - Показать эту справку\n"
         f"• /userinfo - Информация о пользователе\n\n"
-        f"👑 **Административные команды:**\n"
+        f"👑 <b>Административные команды:</b>\n"
         f"• /adduser <ID> - Добавить пользователя в список разрешенных\n"
         f"• /removeuser <ID> - Удалить пользователя из списка разрешенных\n"
         f"• /listusers - Показать список всех разрешенных пользователей\n"
         f"• /cleanup - Очистка временных файлов\n\n"
-        f"📋 **Как использовать:**\n"
+        f"📋 <b>Как использовать:</b>\n"
         f"1. Отправьте /start\n"
         f"2. Введите номер накладной\n"
         f"3. Отправьте фото, видео или документы оборудования\n"
         f"4. Файлы автоматически сохранятся на Яндекс.Диск\n"
         f"5. Продолжайте загружать файлы или используйте /reset для завершения\n\n"
-        f"⚠️ **Ограничения:**\n"
+        f"⚠️ <b>Ограничения:</b>\n"
         f"• Максимальный размер фото: {format_file_size(MAX_FILE_SIZE)}\n"
         f"• Максимальный размер видео: {format_file_size(MAX_VIDEO_SIZE)}\n"
         f"• Максимальный размер документов: {format_file_size(MAX_DOCUMENT_SIZE)}\n"
@@ -546,23 +546,23 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Поддерживаемые фото: JPG, JPEG, PNG\n"
         f"• Поддерживаемые видео: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V\n"
         f"• Поддерживаемые документы: PDF, DOC, DOCX, XLS, XLSX\n\n"
-        f"🔧 **Дополнительно:**\n"
+        f"🔧 <b>Дополнительно:</b>\n"
         f"• Используйте /current для просмотра текущей накладной\n"
         f"• Используйте /status для проверки состояния сервисов\n"
         f"• Используйте /stats для просмотра статистики\n"
         f"• При ошибках используйте /reset для сброса\n\n"
-        f"👥 **Управление пользователями:**\n"
+        f"👥 <b>Управление пользователями:</b>\n"
         f"• Администраторы могут добавлять/удалять пользователей\n"
         f"• Используйте /adduser <ID> для добавления\n"
         f"• Используйте /removeuser <ID> для удаления\n"
         f"• Используйте /listusers для просмотра списка\n\n"
-        f"💡 **Как узнать ID пользователя:**\n"
+        f"💡 <b>Как узнать ID пользователя:</b>\n"
         f"Попросите пользователя отправить /start боту @userinfobot"
     )
     
     await message.reply_text(
         help_text,
-        parse_mode='Markdown',
+        parse_mode='HTML',
         reply_markup=get_main_menu_keyboard(get_user_id(update))
     )
 
@@ -581,10 +581,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         base_folder_exists = await asyncio.to_thread(y.exists, f"/{BASE_FOLDER}")
         
         status_text = (
-            f"🔍 **Статус бота**\n\n"
-            f"✅ **Telegram Bot**: Активен\n"
-            f"✅ **Яндекс.Диск**: Подключен\n"
-            f"📁 **Базовая папка**: {'Существует' if base_folder_exists else 'Не найдена'}\n\n"
+            f"🔍 <b>Статус бота</b>\n\n"
+            f"✅ <b>Telegram Bot</b>: Активен\n"
+            f"✅ <b>Яндекс.Диск</b>: Подключен\n"
+            f"📁 <b>Базовая папка</b>: {'Существует' if base_folder_exists else 'Не найдена'}\n\n"
         )
         
         if disk_info['available']:
@@ -595,22 +595,22 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 used_percent = round((disk_info['total'] - disk_info['free']) / disk_info['total'] * 100, 1)
             
             status_text += (
-                f"💾 **Место на диске:**\n"
+                f"💾 <b>Место на диске:</b>\n"
                 f"• Свободно: {free_space}\n"
                 f"• Всего: {total_space}\n"
                 f"• Использовано: {used_percent}%\n\n"
             )
         else:
-            status_text += "💾 **Место на диске:** Информация недоступна\n\n"
+            status_text += "💾 <b>Место на диске:</b> Информация недоступна\n\n"
         
         status_text += (
-            f"📊 **Статистика:**\n"
+            f"📊 <b>Статистика:</b>\n"
             f"• Фото: {bot_stats['total_photos']}\n"
             f"• Видео: {bot_stats['total_videos']}\n"
             f"• Документы: {bot_stats['total_documents']}\n"
             f"• Накладные: {bot_stats['total_invoices']}\n"
             f"• Ошибки: {bot_stats['errors']}\n\n"
-            f"⚙️ **Настройки:**\n"
+            f"⚙️ <b>Настройки:</b>\n"
             f"• Максимальный размер видео: {format_file_size(MAX_VIDEO_SIZE)}\n"
             f"• Максимальный размер документов: {format_file_size(MAX_DOCUMENT_SIZE)}\n"
             f"• Поддержка 4K: Да\n"
@@ -619,7 +619,7 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await message.reply_text(
             status_text,
-            parse_mode='Markdown',
+            parse_mode='HTML',
             reply_markup=get_main_menu_keyboard(get_user_id(update))
         )
         
