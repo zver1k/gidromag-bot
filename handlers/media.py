@@ -91,6 +91,10 @@ async def _upload(
                 ext = fmt
                 break
 
+    is_jfif = ext.lower() == '.jfif'
+    if is_jfif:
+        ext = '.jpg'
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     unique_id = uuid.uuid4().hex[:8]
     safe_invoice = get_safe_folder_name(invoice_number)
@@ -139,12 +143,15 @@ async def _upload(
         )
         return
 
-    # Image compression (photos only)
+    # Image compression / JFIF conversion (photos only)
     upload_path = temp_path
     compressed_path = None
     if file_type == 'photo':
         compressed_path = os.path.join(tmp_dir, f"compressed_{unique_id}.jpg")
-        if image_utils.compress_photo(temp_path, compressed_path):
+        processed = image_utils.compress_photo(temp_path, compressed_path)
+        if not processed and is_jfif:
+            processed = image_utils.convert_to_jpg(temp_path, compressed_path)
+        if processed:
             upload_path = compressed_path
             file_size = os.path.getsize(compressed_path)
 
@@ -233,12 +240,28 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_session(update, user_id):
         return
     invoice = session_service.user_invoice[user_id]
+    file_obj = await update.message.document.get_file()
+
+    # JFIF files sent "as file" are treated as photos
+    if file_obj.file_path and file_obj.file_path.lower().endswith('.jfif'):
+        if session_service.invoice_photo_count.get(invoice, 0) >= MAX_PHOTOS_PER_INVOICE:
+            await update.message.reply_text(
+                f"❌ Лимит фото достигнут ({MAX_PHOTOS_PER_INVOICE}). Используйте /reset."
+            )
+            return
+        await _upload(
+            update, context, file_obj, invoice, 'photo',
+            MAX_PHOTOS_PER_INVOICE, MAX_FILE_SIZE, SUPPORTED_PHOTO_FORMATS,
+            ".jpg", "📸", "total_photos", "фото"
+        )
+        session_service.touch(user_id)
+        return
+
     if session_service.invoice_document_count.get(invoice, 0) >= MAX_DOCUMENTS_PER_INVOICE:
         await update.message.reply_text(
             f"❌ Лимит документов достигнут ({MAX_DOCUMENTS_PER_INVOICE}). Используйте /reset."
         )
         return
-    file_obj = await update.message.document.get_file()
     await _upload(
         update, context, file_obj, invoice, 'document',
         MAX_DOCUMENTS_PER_INVOICE, MAX_DOCUMENT_SIZE, SUPPORTED_DOCUMENT_FORMATS,

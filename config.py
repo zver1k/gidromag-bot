@@ -23,7 +23,7 @@ MAX_VIDEOS_PER_INVOICE = 10  # Максимум видео на накладну
 MAX_DOCUMENTS_PER_INVOICE = 20  # Максимум документов на накладную
 
 # Поддерживаемые форматы
-SUPPORTED_PHOTO_FORMATS = ['.jpg', '.jpeg', '.png']
+SUPPORTED_PHOTO_FORMATS = ['.jpg', '.jpeg', '.png', '.jfif']
 SUPPORTED_VIDEO_FORMATS = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.m4v', '.3gp', '.3g2', '.f4v', '.asf']
 SUPPORTED_DOCUMENT_FORMATS = ['.pdf', '.doc', '.docx', '.xls', '.xlsx']
 
@@ -60,7 +60,7 @@ ERROR_MESSAGES = {
     "file_too_large": "❌ Файл слишком большой!\n\nМаксимальный размер: {max_size}MB\nТекущий размер: {current_size}MB",
     "video_too_large": "❌ Видео слишком большое!\n\nМаксимальный размер: {max_size}MB\nТекущий размер: {current_size}MB",
     "unsupported_format": "❌ Неподдерживаемый формат файла!\n\nПоддерживаются фото: JPG, JPEG, PNG\nПоддерживаются видео: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V, 3GP, 3G2, F4V, ASF",
-    "unsupported_photo_format": "❌ Неподдерживаемый формат фото!\n\nПоддерживаются только: JPG, JPEG, PNG",
+    "unsupported_photo_format": "❌ Неподдерживаемый формат фото!\n\nПоддерживаются только: JPG, JPEG, PNG, JFIF",
     "unsupported_video_format": "❌ Неподдерживаемый формат видео!\n\nПоддерживаются только: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V, 3GP, 3G2, F4V, ASF\nПоддерживается разрешение до 4K",
     "unsupported_document_format": "❌ Неподдерживаемый формат документа!\n\nПоддерживаются только: PDF, DOC, DOCX, XLS, XLSX",
     "invoice_limit_reached": "❌ Достигнут лимит файлов для накладной '{invoice}'\n\nМаксимум: {max_photos} фото и {max_videos} видео\nТекущее количество: {current_photos} фото, {current_videos} видео\n\nИспользуйте /reset для сброса и начала новой накладной.",
@@ -130,7 +130,7 @@ HELP_MESSAGE = """🤖 **Справка по командам**
 • Максимум фото на накладную: {max_photos}
 • Максимум видео на накладную: {max_videos}
 • Максимум документов на накладную: 20
-• Поддерживаемые фото: JPG, JPEG, PNG
+• Поддерживаемые фото: JPG, JPEG, PNG, JFIF (конвертируется в JPG)
 • Поддерживаемые видео: MP4, AVI, MOV, MKV, WMV, FLV, WEBM, M4V, 3GP, 3G2, F4V, ASF (до 4K)
 • Поддерживаемые документы: PDF, DOC, DOCX, XLS, XLSX
 

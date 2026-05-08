@@ -16,6 +16,21 @@ def compute_md5(file_path: str) -> str:
     return h.hexdigest()
 
 
+def convert_to_jpg(input_path: str, output_path: str) -> bool:
+    """Convert image to JPEG. Returns True on success."""
+    try:
+        from PIL import Image
+        with Image.open(input_path) as img:
+            if img.mode in ('RGBA', 'P', 'LA'):
+                img = img.convert('RGB')
+            img.save(output_path, 'JPEG', quality=95, optimize=True)
+        logger.info(f"🔄 JFIF конвертирован в JPEG: {os.path.basename(input_path)}")
+        return True
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось конвертировать в JPEG: {e}")
+        return False
+
+
 def compress_photo(input_path: str, output_path: str) -> bool:
     """Compress photo if > 5MB. Returns True if file was compressed."""
     try:
